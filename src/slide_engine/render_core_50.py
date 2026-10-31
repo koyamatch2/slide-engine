@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core50Payload
@@ -33,7 +33,7 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
     """
     has_caption = bool(payload.caption)
     caption_offset = CAPTION_HEIGHT + CAPTION_GAP if has_caption else Inches(0)
-    frame_height = Inches(box.height - caption_offset)
+    frame_height = Length(box.height - caption_offset)
 
     frame_box = BoundingBox(
         left=box.left,
@@ -66,7 +66,7 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
     if has_caption and payload.caption:
         caption_box = BoundingBox(
             left=box.left,
-            top=Inches(box.top + frame_height + CAPTION_GAP),
+            top=Length(box.top + frame_height + CAPTION_GAP),
             width=box.width,
             height=CAPTION_HEIGHT,
         )

@@ -27,6 +27,7 @@ from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
 from slide_engine.models import (
     MAX_SLIDES_PER_DECK,
     TEMPLATE_REGISTRY,
+    ChartSeries,
     Core10Payload,
     Core30Payload,
     Core50Payload,
@@ -65,7 +66,7 @@ class TestSchemaValidationAndDefenses:
             Core30Payload(
                 chart_type="column",
                 categories=["Q1", "Q2", "Q3"],
-                series=[{"name": "Revenue", "values": [10.0, 20.0]}],  # Expected 3 values
+                series=[ChartSeries(name="Revenue", values=[10.0, 20.0])],  # Expected 3 values
             )
 
     def test_deck_slide_count_limit(self) -> None:

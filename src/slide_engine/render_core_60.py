@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core60Payload
@@ -32,7 +32,7 @@ def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> No
     num_cards = len(payload.metrics)
     total_gaps = CARD_GAP * (num_cards - 1)
     available_width = box.width - total_gaps
-    card_width = Inches(available_width / num_cards)
+    card_width = Length(int(available_width / num_cards))
 
     current_left = box.left
 
@@ -55,10 +55,10 @@ def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> No
 
         # 2. Content Box
         inner_box = BoundingBox(
-            left=Inches(card_box.left + CARD_INNER_PAD),
-            top=Inches(card_box.top + CARD_INNER_PAD),
-            width=Inches(card_box.width - (CARD_INNER_PAD * 2)),
-            height=Inches(card_box.height - (CARD_INNER_PAD * 2)),
+            left=Length(card_box.left + CARD_INNER_PAD),
+            top=Length(card_box.top + CARD_INNER_PAD),
+            width=Length(card_box.width - (CARD_INNER_PAD * 2)),
+            height=Length(card_box.height - (CARD_INNER_PAD * 2)),
         )
         tb = ShapeBuilder.add_textbox(slide, inner_box)
         tf = tb.text_frame
@@ -105,4 +105,4 @@ def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> No
             else:
                 p_trend.font.color.rgb = SlideMaster.COLORS["text_muted"]
 
-        current_left = Inches(current_left + card_width + CARD_GAP)
+        current_left = Length(current_left + card_width + CARD_GAP)

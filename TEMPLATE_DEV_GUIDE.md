@@ -65,12 +65,12 @@ if TYPE_CHECKING:
 
 ### 3.2 `BoundingBox`（矩形領域クラス）
 ```python
-# インスタンス生成（すべて Inches 型を渡すこと）
+# インスタンス生成（Length 型）
 inner_box = BoundingBox(
-    left=Inches(box.left + Inches(0.200)),
-    top=Inches(box.top + Inches(0.200)),
-    width=Inches(box.width - Inches(0.400)),
-    height=Inches(box.height - Inches(0.400)),
+    left=Length(box.left + Inches(0.200)),
+    top=Length(box.top + Inches(0.200)),
+    width=Length(box.width - Inches(0.400)),
+    height=Length(box.height - Inches(0.400)),
 )
 # 参照可能な属性:
 # inner_box.left, inner_box.top, inner_box.width, inner_box.height

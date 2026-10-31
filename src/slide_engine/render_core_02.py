@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core02Payload
@@ -35,7 +35,7 @@ def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> No
     num_items = len(payload.items)
     total_gaps = GAP_BETWEEN_ROWS * (num_items - 1)
     available_height = box.height - total_gaps
-    row_height = Inches(available_height / num_items)
+    row_height = Length(int(available_height / num_items))
 
     current_top = box.top
 
@@ -54,8 +54,8 @@ def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> No
 
         # 1. Number Badge
         badge_box = BoundingBox(
-            left=Inches(row_box.left + PADDING_CONTENT),
-            top=Inches(row_box.top + (row_height - Inches(0.500)) / 2),
+            left=Length(row_box.left + PADDING_CONTENT),
+            top=Length(int(row_box.top + (row_height - Inches(0.500)) / 2)),
             width=BADGE_WIDTH,
             height=Inches(0.500),
         )
@@ -69,13 +69,13 @@ def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> No
         p_badge.font.color.rgb = SlideMaster.COLORS["accent"] if item.is_active else SlideMaster.COLORS["secondary"]
 
         # 2. Title & Description Box
-        content_left = Inches(row_box.left + PADDING_CONTENT + BADGE_WIDTH + Inches(0.200))
-        content_width = Inches(row_box.width - (content_left - row_box.left) - PADDING_CONTENT)
+        content_left = Length(row_box.left + PADDING_CONTENT + BADGE_WIDTH + Inches(0.200))
+        content_width = Length(row_box.width - (content_left - row_box.left) - PADDING_CONTENT)
         content_box = BoundingBox(
             left=content_left,
-            top=Inches(row_box.top + Inches(0.120)),
+            top=Length(row_box.top + Inches(0.120)),
             width=content_width,
-            height=Inches(row_height - Inches(0.240)),
+            height=Length(row_height - Inches(0.240)),
         )
         tb_content = ShapeBuilder.add_textbox(slide, content_box)
         tf_content = tb_content.text_frame
@@ -94,4 +94,4 @@ def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> No
             p_desc.font.size = FontEngine.pt(10.0)
             p_desc.font.color.rgb = SlideMaster.COLORS["bg_light"] if item.is_active else SlideMaster.COLORS["text_muted"]
 
-        current_top = Inches(current_top + row_height + GAP_BETWEEN_ROWS)
+        current_top = Length(current_top + row_height + GAP_BETWEEN_ROWS)

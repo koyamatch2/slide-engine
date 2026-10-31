@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core00Payload
@@ -42,10 +42,10 @@ def render_core_00(slide: Slide, payload: Core00Payload, box: BoundingBox) -> No
 
     # 2. Error Title & Message Text Box
     text_box = BoundingBox(
-        left=Inches(box.left + PADDING_X),
-        top=Inches(box.top + PADDING_Y),
-        width=Inches(box.width - (PADDING_X * 2)),
-        height=Inches(box.height - (PADDING_Y * 2)),
+        left=Length(box.left + PADDING_X),
+        top=Length(box.top + PADDING_Y),
+        width=Length(box.width - (PADDING_X * 2)),
+        height=Length(box.height - (PADDING_Y * 2)),
     )
     tb = ShapeBuilder.add_textbox(slide, text_box)
     tf = tb.text_frame

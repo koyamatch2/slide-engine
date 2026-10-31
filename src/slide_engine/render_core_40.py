@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core40Payload, MatrixQuadrant
@@ -39,10 +39,10 @@ def _render_quadrant_card(
     )
 
     inner_box = BoundingBox(
-        left=Inches(box.left + QUADRANT_PADDING),
-        top=Inches(box.top + QUADRANT_PADDING),
-        width=Inches(box.width - (QUADRANT_PADDING * 2)),
-        height=Inches(box.height - (QUADRANT_PADDING * 2)),
+        left=Length(box.left + QUADRANT_PADDING),
+        top=Length(box.top + QUADRANT_PADDING),
+        width=Length(box.width - (QUADRANT_PADDING * 2)),
+        height=Length(box.height - (QUADRANT_PADDING * 2)),
     )
     tb = ShapeBuilder.add_textbox(slide, inner_box)
     tf = tb.text_frame
@@ -90,14 +90,14 @@ def render_core_40(slide: Slide, payload: Core40Payload, box: BoundingBox) -> No
     p_x.font.color.rgb = SlideMaster.COLORS["secondary"]
 
     # 2. Quadrants Layout Calculation
-    quad_top = Inches(box.top + AXIS_LABEL_SIZE + Inches(0.100))
-    quad_height = Inches((box.height - AXIS_LABEL_SIZE - Inches(0.100) - GRID_GAP) / 2)
-    quad_width = Inches((box.width - GRID_GAP) / 2)
+    quad_top = Length(box.top + AXIS_LABEL_SIZE + Inches(0.100))
+    quad_height = Length(int((box.height - AXIS_LABEL_SIZE - Inches(0.100) - GRID_GAP) / 2))
+    quad_width = Length(int((box.width - GRID_GAP) / 2))
 
     col1_left = box.left
-    col2_left = Inches(box.left + quad_width + GRID_GAP)
+    col2_left = Length(box.left + quad_width + GRID_GAP)
     row1_top = quad_top
-    row2_top = Inches(quad_top + quad_height + GRID_GAP)
+    row2_top = Length(quad_top + quad_height + GRID_GAP)
 
     # Top-Left
     _render_quadrant_card(

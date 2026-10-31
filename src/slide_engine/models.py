@@ -7,6 +7,7 @@ It enforces text truncation limits, resource ceilings, and template registries.
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 # Maximum limits to prevent denial of service and memory exhaustion

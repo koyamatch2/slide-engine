@@ -7,15 +7,12 @@ It strictly avoids importing other application modules to maintain a clean DAG.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
+from pptx.util import Inches, Length, Pt
 
 if TYPE_CHECKING:
     from pptx.presentation import Presentation as PresentationType
@@ -27,20 +24,20 @@ if TYPE_CHECKING:
 class BoundingBox:
     """Represents a 2D rectangular bounding box on a slide canvas."""
 
-    left: Inches
-    top: Inches
-    width: Inches
-    height: Inches
+    left: Length
+    top: Length
+    width: Length
+    height: Length
 
     @property
-    def right(self) -> Inches:
+    def right(self) -> Length:
         """Calculate right boundary."""
-        return Inches(self.left + self.width)
+        return Length(self.left + self.width)
 
     @property
-    def bottom(self) -> Inches:
+    def bottom(self) -> Length:
         """Calculate bottom boundary."""
-        return Inches(self.top + self.height)
+        return Length(self.top + self.height)
 
 
 class SlideMaster:
@@ -110,18 +107,20 @@ class SlideMaster:
         offset = cls.LEAD_TEXT_HEIGHT + cls.LEAD_TEXT_GAP
         body_box = BoundingBox(
             left=cls.CONTENT_BOX.left,
-            top=Inches(cls.CONTENT_BOX.top + offset),
+            top=Length(cls.CONTENT_BOX.top + offset),
             width=cls.CONTENT_BOX.width,
-            height=Inches(cls.CONTENT_BOX.height - offset),
+            height=Length(cls.CONTENT_BOX.height - offset),
         )
         return lead_box, body_box
+
+    DEFAULT_SPLIT_GAP = Inches(0.400)
 
     @classmethod
     def split_horizontal(
         cls,
         box: BoundingBox,
         split_ratio: float = 0.5,
-        gap: Inches = Inches(0.400),
+        gap: Length | None = None,
     ) -> tuple[BoundingBox, BoundingBox]:
         """Split a bounding box horizontally into left and right panes.
 
@@ -133,10 +132,11 @@ class SlideMaster:
         Returns:
             Tuple of (left_box, right_box).
         """
-        available_width = box.width - gap
-        left_width = Inches(available_width * split_ratio)
-        right_width = Inches(available_width * (1.0 - split_ratio))
-        right_left = Inches(box.left + left_width + gap)
+        effective_gap = cls.DEFAULT_SPLIT_GAP if gap is None else gap
+        available_width = box.width - effective_gap
+        left_width = Length(int(available_width * split_ratio))
+        right_width = Length(int(available_width * (1.0 - split_ratio)))
+        right_left = Length(box.left + left_width + effective_gap)
 
         left_box = BoundingBox(box.left, box.top, left_width, box.height)
         right_box = BoundingBox(right_left, box.top, right_width, box.height)
@@ -339,7 +339,7 @@ def render_standard_header(
     header_box = BoundingBox(
         left=SlideMaster.MARGIN_LEFT,
         top=SlideMaster.MARGIN_TOP,
-        width=SlideMaster.SLIDE_WIDTH - (SlideMaster.MARGIN_LEFT * 2),
+        width=Length(SlideMaster.SLIDE_WIDTH - (SlideMaster.MARGIN_LEFT * 2)),
         height=Inches(1.000),
     )
     textbox = ShapeBuilder.add_textbox(slide, header_box)
@@ -378,10 +378,10 @@ def render_standard_header(
                 border_width_pt=0.75,
             )
             inner_box = BoundingBox(
-                left=Inches(lead_box.left + Inches(0.200)),
-                top=Inches(lead_box.top + Inches(0.120)),
-                width=Inches(lead_box.width - Inches(0.400)),
-                height=Inches(lead_box.height - Inches(0.240)),
+                left=Length(lead_box.left + Inches(0.200)),
+                top=Length(lead_box.top + Inches(0.120)),
+                width=Length(lead_box.width - Inches(0.400)),
+                height=Length(lead_box.height - Inches(0.240)),
             )
             tb_lead = ShapeBuilder.add_textbox(slide, inner_box)
             p_lead = tb_lead.text_frame.paragraphs[0]

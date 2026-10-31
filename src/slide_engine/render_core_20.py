@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core20Payload
@@ -35,7 +35,7 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
     num_steps = len(payload.steps)
     total_gaps = GAP_BETWEEN_STEPS * (num_steps - 1)
     available_width = box.width - total_gaps
-    step_width = Inches(available_width / num_steps)
+    step_width = Length(int(available_width / num_steps))
 
     current_left = box.left
 
@@ -58,9 +58,9 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
 
         # 2. Number Badge Header Box
         badge_box = BoundingBox(
-            left=Inches(step_box.left + CARD_PADDING_X),
-            top=Inches(step_box.top + CARD_PADDING_Y),
-            width=Inches(step_box.width - (CARD_PADDING_X * 2)),
+            left=Length(step_box.left + CARD_PADDING_X),
+            top=Length(step_box.top + CARD_PADDING_Y),
+            width=Length(step_box.width - (CARD_PADDING_X * 2)),
             height=BADGE_HEIGHT,
         )
         tb_badge = ShapeBuilder.add_textbox(slide, badge_box)
@@ -73,10 +73,10 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
 
         # 3. Step Title & Description Box
         content_box = BoundingBox(
-            left=Inches(step_box.left + CARD_PADDING_X),
-            top=Inches(step_box.top + CARD_PADDING_Y + BADGE_HEIGHT + Inches(0.100)),
-            width=Inches(step_box.width - (CARD_PADDING_X * 2)),
-            height=Inches(step_box.height - BADGE_HEIGHT - (CARD_PADDING_Y * 2) - Inches(0.100)),
+            left=Length(step_box.left + CARD_PADDING_X),
+            top=Length(step_box.top + CARD_PADDING_Y + BADGE_HEIGHT + Inches(0.100)),
+            width=Length(step_box.width - (CARD_PADDING_X * 2)),
+            height=Length(step_box.height - BADGE_HEIGHT - (CARD_PADDING_Y * 2) - Inches(0.100)),
         )
         tb_content = ShapeBuilder.add_textbox(slide, content_box)
         tf_content = tb_content.text_frame
@@ -95,4 +95,4 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
         p_desc.font.size = FontEngine.pt(10.0)
         p_desc.font.color.rgb = SlideMaster.COLORS["text_dark"]
 
-        current_left = Inches(current_left + step_width + GAP_BETWEEN_STEPS)
+        current_left = Length(current_left + step_width + GAP_BETWEEN_STEPS)

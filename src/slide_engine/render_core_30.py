@@ -48,9 +48,9 @@ def render_core_30(slide: Slide, payload: Core30Payload, box: BoundingBox) -> No
         box.top,
         box.width,
         box.height,
-        chart_data,
+        chart_data,  # type: ignore[arg-type]
     )
-    chart = chart_shape.chart
+    chart = getattr(chart_shape, "chart", chart_shape)
 
     # Configure corporate chart aesthetics
     chart.has_legend = True

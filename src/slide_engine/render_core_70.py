@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import ComparisonColumn, Core70Payload
@@ -46,10 +46,10 @@ def _render_comparison_column(
     )
 
     inner_box = BoundingBox(
-        left=Inches(box.left + COL_INNER_PAD),
-        top=Inches(box.top + COL_INNER_PAD),
-        width=Inches(box.width - (COL_INNER_PAD * 2)),
-        height=Inches(box.height - (COL_INNER_PAD * 2)),
+        left=Length(box.left + COL_INNER_PAD),
+        top=Length(box.top + COL_INNER_PAD),
+        width=Length(box.width - (COL_INNER_PAD * 2)),
+        height=Length(box.height - (COL_INNER_PAD * 2)),
     )
     tb = ShapeBuilder.add_textbox(slide, inner_box)
     tf = tb.text_frame
@@ -91,7 +91,7 @@ def render_core_70(slide: Slide, payload: Core70Payload, box: BoundingBox) -> No
         payload: Core70Payload instance.
         box: Content BoundingBox.
     """
-    col_width = Inches((box.width - COL_GAP) / 2)
+    col_width = Length(int((box.width - COL_GAP) / 2))
 
     left_box = BoundingBox(
         left=box.left,
@@ -100,7 +100,7 @@ def render_core_70(slide: Slide, payload: Core70Payload, box: BoundingBox) -> No
         height=box.height,
     )
     right_box = BoundingBox(
-        left=Inches(box.left + col_width + COL_GAP),
+        left=Length(box.left + col_width + COL_GAP),
         top=box.top,
         width=col_width,
         height=box.height,
