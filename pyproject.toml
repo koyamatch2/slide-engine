@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slide-engine"
+version = "1.0.0"
+description = "Production-grade automated PowerPoint generation engine"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-pptx>=1.0.2",
+    "pydantic>=2.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[project.scripts]
+slide-engine = "slide_engine.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slide_engine"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C90",    # mccabe complexity
+    "TID251", # banned-api
+    "SLF001", # private member access
+]
+ignore = [
+    "E501",   # line-too-long (handled by formatter)
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 6
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"pptx.dml.color.RGBColor" = { msg = "Use SlideMaster.COLORS from slide_engine.core_base instead." }
+"pptx.util.Pt" = { msg = "Use FontEngine.pt from slide_engine.core_base instead." }
+
+[tool.ruff.lint.per-file-ignores]
+"src/slide_engine/core_base.py" = ["TID251"]
+"tests/*" = ["SLF001", "TID251"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+
+[[tool.mypy.overrides]]
+module = "pptx.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --strict-markers"

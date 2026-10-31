@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./assets:/app/assets:ro
+      - ./examples:/app/examples:ro
+      - ./output:/app/output:rw
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Usage: docker compose run --rm engine --input /app/examples/sample_deck.json --output /app/output/generated.pptx

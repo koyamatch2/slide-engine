@@ -1,0 +1,236 @@
+{
+  "theme_name": "corporate_blue",
+  "slides": [
+    {
+      "template_id": "CORE-01",
+      "title": "表紙",
+      "payload": {
+        "title": "次世代エンタープライズDX戦略ロードマップ",
+        "subtitle": "データ統合基盤・AIエージェントオーケストレーション構想",
+        "presenter": "DX推進部 / IT戦略推進タスクフォース",
+        "date_str": "2026年10月"
+      }
+    },
+    {
+      "template_id": "CORE-02",
+      "title": "アジェンダ",
+      "subtitle": "AGENDA & ROADMAP",
+      "payload": {
+        "items": [
+          {
+            "number": "01",
+            "title": "DX推進を取り巻く現況と構造的課題",
+            "description": "レガシーシステム制約とデータサイロ化の分析",
+            "is_active": false
+          },
+          {
+            "number": "02",
+            "title": "全社データプラットフォーム基盤アーキテクチャ",
+            "description": "リアルタイム連携とガバナンス統制モデルの確立",
+            "is_active": true
+          },
+          {
+            "number": "03",
+            "title": "AIエージェント群による業務変革パイロット",
+            "description": "定型業務削減と意思決定高度化の実装検証",
+            "is_active": false
+          },
+          {
+            "number": "04",
+            "title": "投資対効果（ROI）および段階的導入計画",
+            "description": "3カ年マイルストーンとリスクマネジメント体制",
+            "is_active": false
+          }
+        ]
+      }
+    },
+    {
+      "template_id": "CORE-10",
+      "title": "基盤刷新対象システムの比較評価",
+      "subtitle": "SYSTEM EVALUATION",
+      "lead_text": "保守期限および拡張性リスクを総合評価し、基幹ERPおよび情報系データマートを第1期移行対象として選定。",
+      "payload": {
+        "headers": ["対象領域", "現行基盤", "主要課題", "刷新方針", "優先度"],
+        "rows": [
+          ["基幹ERP", "オンプレミス RDB", "保守期限切れ・リアルタイム性欠如", "クラウドネイティブ移行", "最優先 (S)"],
+          ["情報データマート", "分散個別DB", "データ定義の不整合・サイロ化", "全社レイクハウス統合", "高 (A)"],
+          ["現場点検アプリ", "個別端末スクリプト", "手動転記・バージョン管理不能", "PWA+Web API集約", "中 (B)"],
+          ["帳票出力基盤", "レガシーバッチ", "出力遅延・印刷コスト高止まり", "クラウドPDF自動配信", "中 (B)"]
+        ],
+        "highlight_row_index": 0
+      }
+    },
+    {
+      "template_id": "CORE-20",
+      "title": "データプラットフォーム展開プロセス",
+      "subtitle": "IMPLEMENTATION PHASES",
+      "lead_text": "全4フェーズに分割し、PoCによる検証を経て全社横断展開を実施する。",
+      "payload": {
+        "steps": [
+          {
+            "step_number": 1,
+            "title": "要件定義・PoC",
+            "description": "パイロット部門を対象としたデータ抽出プロトタイプ検証"
+          },
+          {
+            "step_number": 2,
+            "title": "基盤構築",
+            "description": "クラウド基盤・セキュリティ暗号化・IAM統合認証の整備"
+          },
+          {
+            "step_number": 3,
+            "title": "パイロット展開",
+            "description": "主要2事業部への先行リリースおよび運用負荷モニタリング"
+          },
+          {
+            "step_number": 4,
+            "title": "全社横断展開",
+            "description": "全事業部への段階的展開とレガシーシステムの完全廃止"
+          }
+        ]
+      }
+    },
+    {
+      "template_id": "CORE-30",
+      "title": "年間処理工数の推移と削減予測",
+      "subtitle": "WORKLOAD REDUCTION FORECAST",
+      "lead_text": "自動化基盤導入により、2028年度末までに年間約45,000時間の定型業務工数を削減見込み。",
+      "payload": {
+        "chart_type": "column",
+        "categories": ["2025年", "2026年(予)", "2027年(予)", "2028年(予)"],
+        "series": [
+          {
+            "name": "手作業工数 (時間)",
+            "values": [95000.0, 82000.0, 61000.0, 50000.0]
+          },
+          {
+            "name": "自動化工数 (時間)",
+            "values": [5000.0, 18000.0, 39000.0, 50000.0]
+          }
+        ]
+      }
+    },
+    {
+      "template_id": "CORE-40",
+      "title": "AIエージェント適用領域のポジショニング",
+      "subtitle": "STRATEGIC POSITIONING MATRIX",
+      "lead_text": "業務インパクトと実装難易度の2軸により、優先的に投資すべき領域を類型化。",
+      "payload": {
+        "x_axis_label": "業務変革インパクト（大 ◀ ▶ 小）",
+        "y_axis_label": "システム実装難易度（低 ◀ ▶ 高）",
+        "top_left": {
+          "title": "戦略的集中領域",
+          "badge": "Phase 1",
+          "description": "定常レポーティング自動化・障害検知一次分析。高インパクトかつ早期実現可能。"
+        },
+        "top_right": {
+          "title": "中長期変革領域",
+          "badge": "Phase 3",
+          "description": "全社投資判断アシスタント・契約書高度レビュー。難度高だが抜本的価値創出。"
+        },
+        "bottom_left": {
+          "title": "クイックウィン領域",
+          "badge": "即時着手",
+          "description": "社内FAQ回答・定型メールドラフト作成。低コストで現場の即効効果を創出。"
+        },
+        "bottom_right": {
+          "title": "慎重検討領域",
+          "badge": "保留",
+          "description": "個別部門のニッチ業務。個別ROIが低いため共通化を前提に後回しとする。"
+        }
+      }
+    },
+    {
+      "template_id": "CORE-50",
+      "title": "システム全体構成図（配置ガイド）",
+      "subtitle": "TARGET ARCHITECTURE",
+      "lead_text": "下部にキャプションを自動配置し、中央に図解・スクリーンショットの手動貼付用枠を生成。",
+      "payload": {
+        "placeholder_label": "クラウド・データレイクハウス構成図（Visio / Miro等から貼付）",
+        "caption": "各事業部データソースからEvent Hub経由でリアルタイムストリーミング集約"
+      }
+    },
+    {
+      "template_id": "CORE-60",
+      "title": "主要業績評価指標（KPI）サマリー",
+      "subtitle": "KEY PERFORMANCE INDICATORS",
+      "lead_text": "3カ年計画における定量目標の現在値と達成見込み水準。",
+      "payload": {
+        "metrics": [
+          {
+            "label": "年間創出時間",
+            "value": "45,000",
+            "unit": "時間/年",
+            "trend": "+22% 達成ペース",
+            "is_positive": true
+          },
+          {
+            "label": "システム保守運用コスト",
+            "value": "18.5",
+            "unit": "億円",
+            "trend": "▲15% 削減目標",
+            "is_positive": true
+          },
+          {
+            "label": "データ連携リードタイム",
+            "value": "1.2",
+            "unit": "秒",
+            "trend": "従来比 1/3600 短縮",
+            "is_positive": true
+          }
+        ]
+      }
+    },
+    {
+      "template_id": "CORE-70",
+      "title": "現行運用と次期プラットフォームの対比",
+      "subtitle": "BEFORE / AFTER COMPARISON",
+      "lead_text": "サイロ化された個別最適から、ガバナンスとアジリティを両立した全体最適基盤へ移行。",
+      "payload": {
+        "left_column": {
+          "header": "現行運用（As-Is）",
+          "sub_header": "個別最適・属人化の限界",
+          "points": [
+            "部門ごとに独立したDBが存在しデータ定義が不一致",
+            "週次バッチ処理による集計遅延（直近データの欠落）",
+            "ExcelVBAや手作業集計による属人化と引き継ぎ困難",
+            "権限管理が分散しセキュリティ監査証跡の追跡が困難"
+          ],
+          "is_highlighted": false
+        },
+        "right_column": {
+          "header": "次期基盤（To-Be）",
+          "sub_header": "全体最適・リアルタイムガバナンス",
+          "points": [
+            "一元化されたレイクハウスによるSSOT（信頼できる単一情報源）",
+            "ストリーミング連携によるミリ秒単位のリアルタイム同期",
+            "Python/FastAPI標準化パイプラインによる保守性向上",
+            "IAM統合認証とアクセスログの自動監査証跡保管"
+          ],
+          "is_highlighted": true
+        }
+      }
+    },
+    {
+      "template_id": "CORE-10",
+      "title": "異種ハイブリッド分割：仕様定義と構成図",
+      "subtitle": "HETEROGENEOUS SPLIT LAYOUT",
+      "lead_text": "同一スライド内で左側に表（CORE-10）、右側に図解配置枠（CORE-50）を配置する複合構成。",
+      "payload": {
+        "headers": ["コンポーネント", "プロトコル", "役割"],
+        "rows": [
+          ["Ingestion", "HTTPS/gRPC", "データ受領"],
+          ["Processing", "Python 3.12", "正規化・検証"],
+          ["Storage", "Parquet/Iceberg", "長期分散蓄積"],
+          ["Serving", "OpenAPI", "外部API提供"]
+        ]
+      },
+      "right_template_id": "CORE-50",
+      "right_payload": {
+        "placeholder_label": "右ペイン用：パイプライン詳細フロー図（PowerPoint上で貼付）",
+        "caption": "各処理レイヤーのレイテンシと暗号化境界"
+      },
+      "split_ratio": 0.5
+    }
+  ]
+}
