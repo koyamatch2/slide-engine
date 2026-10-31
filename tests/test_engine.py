@@ -11,12 +11,15 @@ Verifies:
 from __future__ import annotations
 
 import inspect
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
+from slide_engine.__main__ import main
 from slide_engine.controller import (
     _initialize_presentation,
     _render_slide_with_failsoft,
@@ -103,6 +106,76 @@ class TestSchemaValidationAndDefenses:
 
 class TestGeometryAndLayout:
     """Verifies bounding box calculations, lead text offsets, and canvas operations."""
+
+    def test_bounding_box_coordinates_and_properties(self) -> None:
+        """BoundingBox must compute right and bottom as Length without double-scaling."""
+        box = BoundingBox(
+            left=Length(1000),
+            top=Length(2000),
+            width=Length(3000),
+            height=Length(4000),
+        )
+        assert box.right == Length(4000)
+        assert box.bottom == Length(6000)
+        assert isinstance(box.right, Length)
+        assert isinstance(box.bottom, Length)
+        # Ensure raw arithmetic value is strictly preserved (no Inches(x) multiplier)
+        assert int(box.right) == 4000
+        assert int(box.bottom) == 6000
+
+    def test_split_horizontal_exact_geometry_and_conservation(self) -> None:
+        """split_horizontal must strictly conserve total width and retain Length types."""
+        content_box = SlideMaster.CONTENT_BOX
+        left_box, right_box = SlideMaster.split_horizontal(content_box, split_ratio=0.5)
+
+        # Type invariants
+        assert isinstance(left_box.left, Length)
+        assert isinstance(left_box.width, Length)
+        assert isinstance(left_box.right, Length)
+        assert isinstance(right_box.left, Length)
+        assert isinstance(right_box.width, Length)
+        assert isinstance(right_box.right, Length)
+
+        # Alignment invariants
+        assert left_box.left == content_box.left
+        assert left_box.top == content_box.top
+        assert right_box.top == content_box.top
+        assert left_box.height == content_box.height
+        assert right_box.height == content_box.height
+
+        # Width conservation and split gap continuity
+        gap = SlideMaster.DEFAULT_SPLIT_GAP
+        assert abs(int(left_box.width + right_box.width + gap) - int(content_box.width)) <= 1
+        assert right_box.left == Length(left_box.left + left_box.width + gap)
+
+        # Coordinate bounds check (prevent regression of EMU overflow bug)
+        assert right_box.right <= SlideMaster.SLIDE_WIDTH
+        assert right_box.bottom <= SlideMaster.SLIDE_HEIGHT
+
+    def test_split_horizontal_custom_ratio_and_gap(self) -> None:
+        """split_horizontal respects custom split ratio and custom gap values."""
+        content_box = SlideMaster.CONTENT_BOX
+        custom_gap = Inches(0.200)
+        left_box, right_box = SlideMaster.split_horizontal(
+            content_box,
+            split_ratio=0.3,
+            gap=custom_gap,
+        )
+
+        assert left_box.width < right_box.width
+        assert abs(int(left_box.width + right_box.width + custom_gap) - int(content_box.width)) <= 1
+        assert right_box.left == Length(left_box.left + left_box.width + custom_gap)
+        assert right_box.right <= SlideMaster.SLIDE_WIDTH
+
+    def test_split_horizontal_nested_splits_no_coordinate_explosion(self) -> None:
+        """Repeated splits must not explode coordinates exponentially."""
+        content_box = SlideMaster.CONTENT_BOX
+        left_box, _ = SlideMaster.split_horizontal(content_box)
+        sub_left, sub_right = SlideMaster.split_horizontal(left_box, split_ratio=0.5)
+
+        assert sub_left.left == content_box.left
+        assert sub_right.right <= left_box.right
+        assert sub_right.right < SlideMaster.SLIDE_WIDTH
 
     def test_lead_text_box_offset(self) -> None:
         """Lead text presence must reduce and push down the body content box."""
@@ -192,3 +265,78 @@ class TestFailSoftExecution:
         assert summary["rendered_slides"] == 2
         assert summary["fallback_slides"] == 0
         assert len(prs.slides) == 2
+
+    def test_sample_deck_full_generation_zero_fallbacks(self) -> None:
+        """Full sample deck must render all 10 slides with exactly 0 fallbacks."""
+        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
+        with open(sample_path, encoding="utf-8") as f:
+            deck_dict = json.load(f)
+
+        deck = PresentationDeck.model_validate(deck_dict)
+        prs, summary = generate_presentation(deck)
+
+        assert summary["total_slides"] == 10
+        assert summary["rendered_slides"] == 10
+        assert summary["fallback_slides"] == 0
+        assert len(prs.slides) == 10
+
+        # Specifically verify the 10th slide (the heterogeneous split slide)
+        slide_10 = prs.slides[9]
+        # Must not have error notes
+        if slide_10.has_notes_slide:
+            notes_text = slide_10.notes_slide.notes_text_frame.text
+            assert "Slide Rendering Error" not in notes_text
+
+        # Must have shapes rendered on both split panes (table on left, placeholder on right)
+        shape_types = [s.shape_type for s in slide_10.shapes]
+        assert len(shape_types) >= 2
+
+    def test_cli_fail_on_fallback_success(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """CLI with --fail-on-fallback exits with 0 on normal presentation."""
+        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
+        out_path = tmp_path / "out.pptx"
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["slide-engine", "-i", str(sample_path), "-o", str(out_path), "--fail-on-fallback"],
+        )
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 0
+        assert out_path.exists()
+        assert out_path.stat().st_size > 0
+
+    def test_cli_fail_on_fallback_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """CLI with --fail-on-fallback exits with code 4 when a fallback occurs."""
+        # Override build_dynamic_dispatch_table to include a crashing renderer
+        def crashing_renderer(slide: Any, payload: Any, box: BoundingBox) -> None:
+            raise RuntimeError("Forced renderer explosion")
+
+        monkeypatch.setattr(
+            "slide_engine.controller.build_dynamic_dispatch_table",
+            lambda: {"CORE-00": lambda s, p, b: None, "CORE-10": crashing_renderer},
+        )
+
+        sample_input = {
+            "theme_name": "corporate_blue",
+            "slides": [
+                {
+                    "template_id": "CORE-10",
+                    "title": "Will Fallback",
+                    "payload": {"headers": ["A"], "rows": [["1"]]},
+                }
+            ],
+        }
+
+        monkeypatch.setattr("sys.stdin.read", lambda: json.dumps(sample_input))
+        monkeypatch.setattr("sys.argv", ["slide-engine", "--fail-on-fallback"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 4
+        captured = capsys.readouterr()
+        assert "Strict Generation Failure: 1 slide(s)" in captured.err

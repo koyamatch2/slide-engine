@@ -39,3 +39,14 @@ jobs:
       - name: Test Docker Build
         run: |
           docker build -t slide-engine:test .
+
+      - name: Verify Slide Generation via Docker
+        run: |
+          mkdir -p output && chmod 777 output
+          docker run --rm \
+            -v ${{ github.workspace }}/output:/app/output \
+            slide-engine:test \
+            --input /app/examples/sample_deck.json \
+            --output /app/output/generated.pptx \
+            --fail-on-fallback
+          test -s output/generated.pptx

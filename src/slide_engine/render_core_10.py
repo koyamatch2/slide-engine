@@ -6,12 +6,12 @@ row highlighting, and cell typography scaling.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Length
 
-from slide_engine.core_base import BoundingBox, FontEngine, SlideMaster
+from slide_engine.core_base import BoundingBox, ColorType, FontEngine, SlideMaster
 from slide_engine.models import Core10Payload
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from pptx.table import Table
 
 
-def _resolve_row_colors(is_highlighted: bool, is_even: bool) -> tuple[Any, Any]:
+def _resolve_row_colors(is_highlighted: bool, is_even: bool) -> tuple[ColorType, ColorType]:
     """Determine background and text colors for a data row."""
     if is_highlighted:
         return SlideMaster.COLORS["fallback_bg"], SlideMaster.COLORS["primary"]

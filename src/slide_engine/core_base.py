@@ -14,6 +14,8 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches, Length, Pt
 
+ColorType = RGBColor
+
 if TYPE_CHECKING:
     from pptx.presentation import Presentation as PresentationType
     from pptx.shapes.autoshape import Shape
