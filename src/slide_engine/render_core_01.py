@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 COVER_LEFT = Inches(1.200)
 COVER_TOP = Inches(2.200)
 COVER_WIDTH = Inches(10.933)
-COVER_HEIGHT = Inches(4.200)
+COVER_HEIGHT = Inches(2.400)
 
-META_OFFSET_TOP = Inches(4.800)
-META_HEIGHT = Inches(1.500)
+META_OFFSET_TOP = Inches(4.900)
+META_HEIGHT = Inches(1.200)
 
 
 def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> None:

@@ -200,6 +200,67 @@ class TestGeometryAndLayout:
         ShapeBuilder.clean_slide_canvas(slide)
         assert len(slide.shapes) == 0
 
+    def test_sample_deck_all_shapes_within_slide_bounds(self) -> None:
+        """Every rendered shape across all slides must lie strictly within slide boundaries."""
+        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
+        with open(sample_path, encoding="utf-8") as f:
+            deck_dict = json.load(f)
+
+        prs, summary = generate_presentation(PresentationDeck.model_validate(deck_dict))
+        assert summary["fallback_slides"] == 0
+        assert prs.slide_width is not None
+        assert prs.slide_height is not None
+
+        slide_w = int(prs.slide_width)
+        slide_h = int(prs.slide_height)
+
+        for idx, slide in enumerate(prs.slides, 1):
+            for s_idx, shape in enumerate(slide.shapes):
+                left = int(shape.left or 0)
+                top = int(shape.top or 0)
+                width = int(shape.width or 0)
+                height = int(shape.height or 0)
+                right = left + width
+                bottom = top + height
+
+                assert left >= 0, f"Slide {idx} Shape {s_idx} left < 0: {left}"
+                assert top >= 0, f"Slide {idx} Shape {s_idx} top < 0: {top}"
+                assert right <= slide_w, f"Slide {idx} Shape {s_idx} exceeds slide width: {right} > {slide_w}"
+                assert bottom <= slide_h, f"Slide {idx} Shape {s_idx} exceeds slide height: {bottom} > {slide_h}"
+
+    def test_sample_deck_no_unintended_peer_text_overlap(self) -> None:
+        """Verify peer textboxes and pane elements do not unintentionally overlap."""
+        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
+        with open(sample_path, encoding="utf-8") as f:
+            deck_dict = json.load(f)
+
+        prs, _ = generate_presentation(PresentationDeck.model_validate(deck_dict))
+
+        # Slide 1 (Cover): Title box and metadata box must have zero overlap
+        slide_1 = prs.slides[0]
+        text_boxes = [s for s in slide_1.shapes if s.has_text_frame]
+        assert len(text_boxes) >= 2
+        title_tb, meta_tb = text_boxes[0], text_boxes[1]
+        title_bottom = int(title_tb.top or 0) + int(title_tb.height or 0)
+        meta_top = int(meta_tb.top or 0)
+        assert title_bottom <= meta_top, f"Cover title overlaps meta: bottom {title_bottom} > top {meta_top}"
+
+        # Slide 10 (Split): Left table and Right guide box must not horizontally overlap
+        slide_10 = prs.slides[9]
+        table_shapes = [s for s in slide_10.shapes if s.has_table]
+        assert len(table_shapes) == 1
+        table_shape = table_shapes[0]
+        table_right = int(table_shape.left or 0) + int(table_shape.width or 0)
+
+        right_shapes = [
+            s for s in slide_10.shapes
+            if int(s.left or 0) > table_right and s != table_shape and int(s.top or 0) >= int(table_shape.top or 0)
+        ]
+        assert len(right_shapes) >= 1
+        for rs in right_shapes:
+            rs_left = int(rs.left or 0)
+            assert table_right <= rs_left, f"Split panes overlap: table right {table_right} > right shape left {rs_left}"
+
 
 class TestFailSoftExecution:
     """Verifies that rendering errors fall back to CORE-00 safely."""
