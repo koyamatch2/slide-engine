@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Length
 
-from slide_engine.core_base import BoundingBox, ColorType, FontEngine, SlideMaster
+from slide_engine.core_base import BoundingBox, ColorType, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core10Payload
 
 if TYPE_CHECKING:
@@ -41,8 +41,7 @@ def _render_data_row(
     for col_idx in range(num_cols):
         cell = table.cell(row_idx + 1, col_idx)
         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = bg_col
+        ShapeBuilder.set_cell_solid_fill(cell, bg_col)
 
         cell_text = row_data[col_idx] if col_idx < len(row_data) else ""
         tf = cell.text_frame
@@ -78,8 +77,7 @@ def render_core_10(slide: Slide, payload: Core10Payload, box: BoundingBox) -> No
     for col_idx, header_text in enumerate(payload.headers):
         cell = table.cell(0, col_idx)
         cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = SlideMaster.COLORS["primary"]
+        ShapeBuilder.set_cell_solid_fill(cell, SlideMaster.COLORS["primary"])
 
         tf = cell.text_frame
         tf.word_wrap = True

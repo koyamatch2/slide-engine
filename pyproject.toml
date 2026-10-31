@@ -78,18 +78,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "slide_engine.core_base",
-    "slide_engine.controller",
-    "slide_engine.render_core_00",
-    "slide_engine.render_core_01",
-    "slide_engine.render_core_02",
-    "slide_engine.render_core_10",
-    "slide_engine.render_core_20",
-    "slide_engine.render_core_30",
-    "slide_engine.render_core_40",
-    "slide_engine.render_core_50",
-    "slide_engine.render_core_60",
-    "slide_engine.render_core_70",
-    "tests.test_engine",
 ]
 disallow_untyped_calls = false
 

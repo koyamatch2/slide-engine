@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 
-from slide_engine.core_base import BoundingBox, SlideMaster
+from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
 from slide_engine.models import Core30Payload
 
 if TYPE_CHECKING:
@@ -34,11 +33,7 @@ def render_core_30(slide: Slide, payload: Core30Payload, box: BoundingBox) -> No
         payload: Core30Payload instance.
         box: Content BoundingBox.
     """
-    chart_data = CategoryChartData()
-    chart_data.categories = payload.categories
-
-    for series in payload.series:
-        chart_data.add_series(series.name, series.values)
+    chart_data = ShapeBuilder.build_chart_data(payload.categories, payload.series)
 
     xl_chart_type = CHART_TYPE_MAP.get(payload.chart_type, XL_CHART_TYPE.COLUMN_CLUSTERED)
 
@@ -48,7 +43,7 @@ def render_core_30(slide: Slide, payload: Core30Payload, box: BoundingBox) -> No
         box.top,
         box.width,
         box.height,
-        chart_data,  # type: ignore[arg-type]
+        chart_data,
     )
     chart = getattr(chart_shape, "chart", chart_shape)
 

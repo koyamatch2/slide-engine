@@ -73,6 +73,9 @@ cat examples/sample_deck.json | slide-engine > output/streamed.pptx
 docker compose run --rm engine \
   --input /app/examples/sample_deck.json \
   --output /app/output/generated.pptx
+
+# パターンD: CI/CD・品質保証用：退避スライド発生時に異常終了する厳格モード
+slide-engine --input examples/sample_deck.json --output output/presentation.pptx --fail-on-fallback
 ```
 
 ---
@@ -114,10 +117,11 @@ docker compose run --rm engine \
 ### 6.1 CLI 終了コード（Exit Codes）
 | 終了コード | 状態 | 意味・発生原因 |
 | :---: | :--- | :--- |
-| **`0`** | **正常完走** | 生成・出力完了（一部スライドが `CORE-00` 退避になった場合も `0` で完走します）。 |
+| **`0`** | **正常完走** | 生成・出力完了（デフォルトでは一部スライドが `CORE-00` 退避になった場合もフェイルソフトとして `0` で完走します）。 |
 | **`1`** | **入力検証エラー** | JSON 構文エラー、未知の `template_id`、配列上限超過、チャート要素数の不一致（Pydantic で遮断）。 |
 | **`2`** | **エンジン致命的エラー** | デッキ全体の生成継続が不可能なシステム例外。 |
 | **`3`** | **出力 I/O エラー** | 出力先ディレクトリの権限不足やディスクフルによる書き込み失敗。 |
+| **`4`** | **厳格退避エラー** | `--fail-on-fallback` 指定時に 1 枚以上のスライドが `CORE-00` 退避になった場合の異常終了（CI/CD ゲート用）。 |
 
 ### 6.2 構造化テレメトリログ（Silent Degradation の監視）
 生成完了時、**標準エラー出力（`STDERR`）** に以下の JSON ログが1行出力されます。バッチ運用時は `fallback_slides > 0` を監視してアラートを発報してください。

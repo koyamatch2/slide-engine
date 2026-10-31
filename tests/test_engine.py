@@ -11,6 +11,7 @@ Verifies:
 from __future__ import annotations
 
 import inspect
+import itertools
 import json
 from pathlib import Path
 from typing import Any
@@ -401,3 +402,105 @@ class TestFailSoftExecution:
         assert exc_info.value.code == 4
         captured = capsys.readouterr()
         assert "Strict Generation Failure: 1 slide(s)" in captured.err
+
+
+SPLIT_TEMPLATES_SAMPLE_PAYLOADS: dict[str, dict[str, Any]] = {
+    "CORE-10": {
+        "headers": ["Col A", "Col B"],
+        "rows": [["1", "2"], ["3", "4"]],
+    },
+    "CORE-20": {
+        "steps": [
+            {"step_number": 1, "title": "Step 1", "description": "Desc 1"},
+            {"step_number": 2, "title": "Step 2", "description": "Desc 2"},
+        ]
+    },
+    "CORE-30": {
+        "chart_type": "column",
+        "categories": ["Q1", "Q2"],
+        "series": [{"name": "S1", "values": [10.0, 20.0]}],
+    },
+    "CORE-40": {
+        "x_axis_label": "X Axis",
+        "y_axis_label": "Y Axis",
+        "top_left": {"title": "TL", "badge": "P1", "description": "Top Left"},
+        "top_right": {"title": "TR", "badge": "P2", "description": "Top Right"},
+        "bottom_left": {"title": "BL", "badge": "P3", "description": "Bottom Left"},
+        "bottom_right": {"title": "BR", "badge": "P4", "description": "Bottom Right"},
+    },
+    "CORE-50": {
+        "placeholder_label": "Diagram Guide",
+        "caption": "Caption Text",
+    },
+    "CORE-60": {
+        "metrics": [
+            {"label": "Metric A", "value": "100", "unit": "%", "trend": "+10%", "is_positive": True},
+            {"label": "Metric B", "value": "200", "unit": "h", "trend": "-5%", "is_positive": False},
+        ]
+    },
+    "CORE-70": {
+        "left_column": {
+            "header": "As-Is",
+            "sub_header": "Legacy",
+            "points": ["Point 1", "Point 2"],
+            "is_highlighted": False,
+        },
+        "right_column": {
+            "header": "To-Be",
+            "sub_header": "Target",
+            "points": ["Point A", "Point B"],
+            "is_highlighted": True,
+        },
+    },
+}
+
+SPLIT_COMBINATIONS = list(
+    itertools.product(SPLIT_TEMPLATES_SAMPLE_PAYLOADS.keys(), SPLIT_TEMPLATES_SAMPLE_PAYLOADS.keys())
+)
+
+
+class TestSplitCombinations:
+    """Verifies all pairwise split-layout combinations across all eligible templates."""
+
+    @pytest.mark.parametrize("left_id,right_id", SPLIT_COMBINATIONS)
+    def test_pairwise_split_rendering(self, left_id: str, right_id: str) -> None:
+        """Any valid pair of split-supporting templates must render with zero fallbacks."""
+        left_payload = SPLIT_TEMPLATES_SAMPLE_PAYLOADS[left_id]
+        right_payload = SPLIT_TEMPLATES_SAMPLE_PAYLOADS[right_id]
+
+        slide_def = SlideDefinition.model_validate({
+            "template_id": left_id,
+            "title": f"Split: {left_id} + {right_id}",
+            "lead_text": "Evaluating split combination layout integrity.",
+            "payload": left_payload,
+            "right_template_id": right_id,
+            "right_payload": right_payload,
+            "split_ratio": 0.5,
+        })
+
+        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
+        prs, summary = generate_presentation(deck)
+
+        assert summary["total_slides"] == 1
+        assert summary["rendered_slides"] == 1
+        assert summary["fallback_slides"] == 0
+        assert len(prs.slides) == 1
+
+        slide = prs.slides[0]
+        if slide.has_notes_slide:
+            assert "Slide Rendering Error" not in slide.notes_slide.notes_text_frame.text
+
+        # Geometric boundary assertions
+        assert prs.slide_width is not None and prs.slide_height is not None
+        slide_w, slide_h = int(prs.slide_width), int(prs.slide_height)
+
+        for s_idx, shape in enumerate(slide.shapes):
+            left = int(shape.left or 0)
+            top = int(shape.top or 0)
+            width = int(shape.width or 0)
+            height = int(shape.height or 0)
+            assert left >= 0, f"Shape {s_idx} in {left_id}+{right_id} left < 0: {left}"
+            assert top >= 0, f"Shape {s_idx} in {left_id}+{right_id} top < 0: {top}"
+            assert left + width <= slide_w, f"Shape {s_idx} in {left_id}+{right_id} right exceeds width: {left + width} > {slide_w}"
+            assert top + height <= slide_h, f"Shape {s_idx} in {left_id}+{right_id} bottom exceeds height: {top + height} > {slide_h}"
+

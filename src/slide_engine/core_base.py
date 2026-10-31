@@ -8,8 +8,9 @@ It strictly avoids importing other application modules to maintain a clean DAG.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches, Length, Pt
@@ -306,6 +307,21 @@ class ShapeBuilder:
             tf.margin_top = Inches(0)
             tf.margin_bottom = Inches(0)
         return textbox
+
+    @staticmethod
+    def set_cell_solid_fill(cell: Any, color: RGBColor) -> None:
+        """Apply solid fill and RGB color to a table cell."""
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = color
+
+    @staticmethod
+    def build_chart_data(categories: list[str], series_list: list[Any]) -> Any:
+        """Construct CategoryChartData safely encapsulating untyped pptx calls."""
+        chart_data = CategoryChartData()
+        chart_data.categories = categories
+        for s in series_list:
+            chart_data.add_series(s.name, s.values)
+        return chart_data
 
     @staticmethod
     def clean_slide_canvas(slide: Slide) -> None:
