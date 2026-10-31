@@ -74,9 +74,9 @@ def _initialize_presentation(theme_name: str) -> PresentationType:
         prs = Presentation(asset_path)
         # Purge any pre-existing dummy slides from the master file
         for i in range(len(prs.slides) - 1, -1, -1):
-            r_id = prs.slides._sldIdLst[i].rId
+            r_id = prs.slides._sldIdLst[i].rId  # noqa: SLF001
             prs.part.drop_rel(r_id)
-            del prs.slides._sldIdLst[i]
+            del prs.slides._sldIdLst[i]  # noqa: SLF001
         return prs
 
     prs = Presentation()

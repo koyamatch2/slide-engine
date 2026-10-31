@@ -39,7 +39,7 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
 
     current_left = box.left
 
-    for idx, step in enumerate(payload.steps):
+    for step in payload.steps:
         step_box = BoundingBox(
             left=current_left,
             top=box.top,
