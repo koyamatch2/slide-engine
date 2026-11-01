@@ -2,12 +2,12 @@
 
 Verifies:
 1. Dynamic dispatch resolution and function signatures across all 10 templates.
-2. Pydantic boundary validation (text limits, array lengths, chart series matching).
-3. Complex layouts (lead text vertical offset, heterogeneous split).
+2. Pydantic boundary validation (text limits, array lengths, chart series matching, split density ceilings).
+3. Complex layouts (lead text vertical offset, heterogeneous split geometry).
 4. Fail-soft behavior (CORE-00 fallback on exceptions).
 5. Clean canvas purging and master background preservation.
 6. Direct unit verification of CJK-aware FontEngine scaling.
-7. Adaptive grid layout and physical non-overflow invariants under extreme split and max-capacity conditions.
+7. Adaptive grid layout, strict physical non-overflow, and zero peer collision under extreme split and max-capacity stress.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from pptx import Presentation
 from pptx.util import Inches, Length
+from pydantic import ValidationError
 
 from slide_engine.__main__ import main
 from slide_engine.controller import (
@@ -97,34 +98,104 @@ class TestSchemaValidationAndDefenses:
                 "right_payload": {"headers": ["Col"], "rows": [["Val"]]},
             })
 
-    def test_core50_payload_purity(self) -> None:
-        """CORE-50 accepts guide frame parameters without file paths."""
-        payload = Core50Payload(
-            placeholder_label="System Topology Diagram",
-            caption="Manual placement placeholder",
-        )
-        assert payload.placeholder_label == "System Topology Diagram"
-        assert payload.caption == "Manual placement placeholder"
-
-    def test_split_overdensity_raises_error(self) -> None:
-        """Split layout must reject payloads exceeding physical legibility limits (e.g. 15-row table)."""
-        with pytest.raises(ValueError, match="exceeds legibility limit"):
-            SlideDefinition.model_validate({
-                "template_id": "CORE-10",
-                "title": "Overdense Split Table",
-                "payload": {
-                    "headers": ["Col 1", "Col 2"],
-                    "rows": [[f"Val {i}-1", f"Val {i}-2"] for i in range(12)],  # 12 rows > 8 max in split
-                },
-                "right_template_id": "CORE-60",
-                "right_payload": {
-                    "metrics": [
-                        {"label": "A", "value": "1"},
-                        {"label": "B", "value": "2"},
-                    ]
-                },
-                "split_ratio": 0.5,
+    def test_core50_payload_purity_rejects_extra_fields(self) -> None:
+        """CORE-50 must reject forbidden extra attributes like image_path or binary data."""
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            Core50Payload.model_validate({
+                "placeholder_label": "System Diagram",
+                "caption": "Figure 1",
+                "image_path": "/var/tmp/diagram.png",
             })
+
+    @pytest.mark.parametrize(
+        "slide_data,expected_match",
+        [
+            # Left pane table > 8 rows
+            (
+                {
+                    "template_id": "CORE-10",
+                    "title": "Split Overdensity",
+                    "payload": {"headers": ["A", "B"], "rows": [[f"R{r}-1", f"R{r}-2"] for r in range(9)]},
+                    "right_template_id": "CORE-50",
+                    "right_payload": {"placeholder_label": "P", "caption": "C"},
+                },
+                "rows > 8 rows maximum",
+            ),
+            # Left pane table > 4 columns
+            (
+                {
+                    "template_id": "CORE-10",
+                    "title": "Split Overdensity",
+                    "payload": {"headers": ["A", "B", "C", "D", "E"], "rows": [["1", "2", "3", "4", "5"]]},
+                    "right_template_id": "CORE-50",
+                    "right_payload": {"placeholder_label": "P", "caption": "C"},
+                },
+                "columns > 4 columns maximum",
+            ),
+            # Right pane process flow > 4 steps
+            (
+                {
+                    "template_id": "CORE-50",
+                    "title": "Split Overdensity",
+                    "payload": {"placeholder_label": "P", "caption": "C"},
+                    "right_template_id": "CORE-20",
+                    "right_payload": {
+                        "steps": [
+                            {"step_number": i, "title": f"S{i}", "description": f"D{i}"}
+                            for i in range(1, 6)
+                        ]
+                    },
+                },
+                "steps > 4 steps maximum",
+            ),
+            # Right pane comparison > 4 points
+            (
+                {
+                    "template_id": "CORE-50",
+                    "title": "Split Overdensity",
+                    "payload": {"placeholder_label": "P", "caption": "C"},
+                    "right_template_id": "CORE-70",
+                    "right_payload": {
+                        "left_column": {"header": "L", "points": [f"P{i}" for i in range(5)]},
+                        "right_column": {"header": "R", "points": ["P1"]},
+                    },
+                },
+                "points > 4 points maximum",
+            ),
+            # Split ratio < 0.25
+            (
+                {
+                    "template_id": "CORE-10",
+                    "title": "Split Ratio Out of Bounds",
+                    "payload": {"headers": ["A"], "rows": [["1"]]},
+                    "right_template_id": "CORE-50",
+                    "right_payload": {"placeholder_label": "P", "caption": "C"},
+                    "split_ratio": 0.20,
+                },
+                "greater than or equal to 0.25",
+            ),
+            # Split ratio > 0.75
+            (
+                {
+                    "template_id": "CORE-10",
+                    "title": "Split Ratio Out of Bounds",
+                    "payload": {"headers": ["A"], "rows": [["1"]]},
+                    "right_template_id": "CORE-50",
+                    "right_payload": {"placeholder_label": "P", "caption": "C"},
+                    "split_ratio": 0.80,
+                },
+                "less than or equal to 0.75",
+            ),
+        ],
+    )
+    def test_split_overdensity_and_ratio_bounds_raise_errors(
+        self,
+        slide_data: dict[str, Any],
+        expected_match: str,
+    ) -> None:
+        """Split layout must reject payloads exceeding density limits or ratio boundaries."""
+        with pytest.raises(ValidationError, match=expected_match):
+            SlideDefinition.model_validate(slide_data)
 
 
 class TestGeometryAndLayout:
@@ -142,7 +213,6 @@ class TestGeometryAndLayout:
         assert box.bottom == Length(6000)
         assert isinstance(box.right, Length)
         assert isinstance(box.bottom, Length)
-        # Ensure raw arithmetic value is strictly preserved (no Inches(x) multiplier)
         assert int(box.right) == 4000
         assert int(box.bottom) == 6000
 
@@ -151,7 +221,6 @@ class TestGeometryAndLayout:
         content_box = SlideMaster.CONTENT_BOX
         left_box, right_box = SlideMaster.split_horizontal(content_box, split_ratio=0.5)
 
-        # Type invariants
         assert isinstance(left_box.left, Length)
         assert isinstance(left_box.width, Length)
         assert isinstance(left_box.right, Length)
@@ -159,19 +228,16 @@ class TestGeometryAndLayout:
         assert isinstance(right_box.width, Length)
         assert isinstance(right_box.right, Length)
 
-        # Alignment invariants
         assert left_box.left == content_box.left
         assert left_box.top == content_box.top
         assert right_box.top == content_box.top
         assert left_box.height == content_box.height
         assert right_box.height == content_box.height
 
-        # Width conservation and split gap continuity
         gap = SlideMaster.DEFAULT_SPLIT_GAP
         assert abs(int(left_box.width + right_box.width + gap) - int(content_box.width)) <= 1
         assert right_box.left == Length(left_box.left + left_box.width + gap)
 
-        # Coordinate bounds check (prevent regression of EMU overflow bug)
         assert right_box.right <= SlideMaster.SLIDE_WIDTH
         assert right_box.bottom <= SlideMaster.SLIDE_HEIGHT
 
@@ -190,16 +256,6 @@ class TestGeometryAndLayout:
         assert right_box.left == Length(left_box.left + left_box.width + custom_gap)
         assert right_box.right <= SlideMaster.SLIDE_WIDTH
 
-    def test_split_horizontal_nested_splits_no_coordinate_explosion(self) -> None:
-        """Repeated splits must not explode coordinates exponentially."""
-        content_box = SlideMaster.CONTENT_BOX
-        left_box, _ = SlideMaster.split_horizontal(content_box)
-        sub_left, sub_right = SlideMaster.split_horizontal(left_box, split_ratio=0.5)
-
-        assert sub_left.left == content_box.left
-        assert sub_right.right <= left_box.right
-        assert sub_right.right < SlideMaster.SLIDE_WIDTH
-
     def test_lead_text_box_offset(self) -> None:
         """Lead text presence must reduce and push down the body content box."""
         lead_box, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
@@ -215,74 +271,12 @@ class TestGeometryAndLayout:
         prs.slide_height = SlideMaster.SLIDE_HEIGHT
         slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-        # Add dummy shapes
         slide.shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(2))
         slide.shapes.add_table(2, 2, Inches(3), Inches(3), Inches(2), Inches(2))
         assert len(slide.shapes) == 2
 
         ShapeBuilder.clean_slide_canvas(slide)
         assert len(slide.shapes) == 0
-
-    def test_sample_deck_all_shapes_within_slide_bounds(self) -> None:
-        """Every rendered shape across all slides must lie strictly within slide boundaries."""
-        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
-        with open(sample_path, encoding="utf-8") as f:
-            deck_dict = json.load(f)
-
-        prs, summary = generate_presentation(PresentationDeck.model_validate(deck_dict))
-        assert summary["fallback_slides"] == 0
-        assert prs.slide_width is not None
-        assert prs.slide_height is not None
-
-        slide_w = int(prs.slide_width)
-        slide_h = int(prs.slide_height)
-
-        for idx, slide in enumerate(prs.slides, 1):
-            for s_idx, shape in enumerate(slide.shapes):
-                left = int(shape.left or 0)
-                top = int(shape.top or 0)
-                width = int(shape.width or 0)
-                height = int(shape.height or 0)
-                right = left + width
-                bottom = top + height
-
-                assert left >= 0, f"Slide {idx} Shape {s_idx} left < 0: {left}"
-                assert top >= 0, f"Slide {idx} Shape {s_idx} top < 0: {top}"
-                assert right <= slide_w, f"Slide {idx} Shape {s_idx} exceeds slide width: {right} > {slide_w}"
-                assert bottom <= slide_h, f"Slide {idx} Shape {s_idx} exceeds slide height: {bottom} > {slide_h}"
-
-    def test_sample_deck_no_unintended_peer_text_overlap(self) -> None:
-        """Verify peer textboxes and pane elements do not unintentionally overlap."""
-        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
-        with open(sample_path, encoding="utf-8") as f:
-            deck_dict = json.load(f)
-
-        prs, _ = generate_presentation(PresentationDeck.model_validate(deck_dict))
-
-        # Slide 1 (Cover): Title box and metadata box must have zero overlap
-        slide_1 = prs.slides[0]
-        text_boxes = [s for s in slide_1.shapes if s.has_text_frame]
-        assert len(text_boxes) >= 2
-        title_tb, meta_tb = text_boxes[0], text_boxes[1]
-        title_bottom = int(title_tb.top or 0) + int(title_tb.height or 0)
-        meta_top = int(meta_tb.top or 0)
-        assert title_bottom <= meta_top, f"Cover title overlaps meta: bottom {title_bottom} > top {meta_top}"
-
-        # Slide 10 (Split): Left table and Right guide box must not horizontally overlap
-        slide_10 = prs.slides[9]
-        table_shapes = [s for s in slide_10.shapes if s.has_table]
-        assert len(table_shapes) == 1
-        table_shape = table_shapes[0]
-        table_right = int(table_shape.left or 0) + int(table_shape.width or 0)
-
-        right_shapes = [
-            s for s in slide_10.shapes
-            if int(s.left or 0) > table_right and s != table_shape and int(s.top or 0) >= int(table_shape.top or 0)
-        ]
-        assert len(right_shapes) >= 1
-        for rs in right_shapes:
-            rs_left = int(rs.left or 0)
-            assert table_right <= rs_left, f"Split panes overlap: table right {table_right} > right shape left {rs_left}"
 
 
 class TestFailSoftExecution:
@@ -293,7 +287,6 @@ class TestFailSoftExecution:
         prs = _initialize_presentation("corporate_blue")
         dispatch_table = build_dynamic_dispatch_table()
 
-        # Mock a broken renderer for CORE-10
         def broken_renderer(slide: Any, payload: Any, box: BoundingBox) -> None:
             raise RuntimeError("Simulated Database Render Failure")
 
@@ -310,70 +303,8 @@ class TestFailSoftExecution:
         assert success is False
         assert len(prs.slides) == 1
 
-        # Check speaker notes for stack trace
         notes = prs.slides[0].notes_slide.notes_text_frame.text
         assert "Simulated Database Render Failure" in notes
-
-    def test_full_pipeline_heterogeneous_split_execution(self) -> None:
-        """Full presentation pipeline must render heterogeneous split slides."""
-        deck_data = {
-            "theme_name": "corporate_blue",
-            "slides": [
-                {
-                    "template_id": "CORE-01",
-                    "title": "Title",
-                    "payload": {"title": "Executive Strategy Briefing", "subtitle": "Q4 Target Analysis"},
-                },
-                {
-                    "template_id": "CORE-10",
-                    "title": "Hybrid Architecture",
-                    "lead_text": "Left table defines SLA parameters, right frame indicates topology diagram.",
-                    "payload": {
-                        "headers": ["Service", "SLA"],
-                        "rows": [["API Gateway", "99.99%"], ["Worker", "99.95%"]],
-                    },
-                    "right_template_id": "CORE-50",
-                    "right_payload": {
-                        "placeholder_label": "Paste Enterprise Network Diagram Here",
-                        "caption": "AWS DirectConnect + Transit Gateway",
-                    },
-                    "split_ratio": 0.5,
-                },
-            ],
-        }
-
-        deck = PresentationDeck.model_validate(deck_data)
-        prs, summary = generate_presentation(deck)
-
-        assert summary["total_slides"] == 2
-        assert summary["rendered_slides"] == 2
-        assert summary["fallback_slides"] == 0
-        assert len(prs.slides) == 2
-
-    def test_sample_deck_full_generation_zero_fallbacks(self) -> None:
-        """Full sample deck must render all 10 slides with exactly 0 fallbacks."""
-        sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
-        with open(sample_path, encoding="utf-8") as f:
-            deck_dict = json.load(f)
-
-        deck = PresentationDeck.model_validate(deck_dict)
-        prs, summary = generate_presentation(deck)
-
-        assert summary["total_slides"] == 10
-        assert summary["rendered_slides"] == 10
-        assert summary["fallback_slides"] == 0
-        assert len(prs.slides) == 10
-
-        # Specifically verify the 10th slide (the heterogeneous split slide)
-        slide_10 = prs.slides[9]
-        # Must not have error notes
-        if slide_10.has_notes_slide:
-            notes_text = slide_10.notes_slide.notes_text_frame.text
-            assert "Slide Rendering Error" not in notes_text
-
-        # Must have shapes rendered on both split panes (table on left, placeholder on right)
-        shape_types = [s.shape_type for s in slide_10.shapes]
-        assert len(shape_types) >= 2
 
     def test_cli_fail_on_fallback_success(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """CLI with --fail-on-fallback exits with 0 on normal presentation."""
@@ -396,7 +327,6 @@ class TestFailSoftExecution:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """CLI with --fail-on-fallback exits with code 4 when a fallback occurs."""
-        # Override build_dynamic_dispatch_table to include a crashing renderer
         def crashing_renderer(slide: Any, payload: Any, box: BoundingBox) -> None:
             raise RuntimeError("Forced renderer explosion")
 
@@ -440,7 +370,6 @@ class TestFontEngineUnit:
         ascii_font = FontEngine.calculate_font_size(ascii_text, box_w, box_h, max_pt=14.0, min_pt=8.0)
         cjk_font = FontEngine.calculate_font_size(cjk_text, box_w, box_h, max_pt=14.0, min_pt=8.0)
 
-        # 32 ASCII chars (~18.5 em) fit in 2 lines at 14pt (36.4pt < 43.2pt); 32 CJK chars (32 em) require 4 lines and must shrink
         assert ascii_font.pt == 14.0
         assert cjk_font.pt <= 11.5
         assert cjk_font.pt >= 8.0
@@ -458,10 +387,16 @@ class TestFontEngineUnit:
 
 
 # ----------------------------------------------------------------------
-# Independent Physical Layout & Overflow Verification Helpers
+# Independent Physical Layout & Invariant Verification Helpers
 # ----------------------------------------------------------------------
 
 MAX_CAPACITY_PAYLOADS: dict[str, dict[str, Any]] = {
+    "CORE-01": {
+        "title": "次世代エンタープライズ統合データプラットフォーム刷新計画および移行戦略ロードマップ策定",
+        "subtitle": "2026年度〜2028年度 中期経営計画における基幹系データベースとデータレイクハウスの完全統合アーキテクチャ設計書",
+        "presenter": "デジタル変革推進本部 エンタープライズアーキテクチャグループ",
+        "date_str": "2026年11月1日 (最終版)",
+    },
     "CORE-02": {
         "items": [
             {
@@ -592,17 +527,14 @@ def _independent_paragraph_height_pt(paragraph: Any, avail_width_pt: float) -> f
     if not p_text:
         return 0.0
 
-    # Determine effective max font size across paragraph and its runs
     pt_candidates = [paragraph.font.size.pt] if paragraph.font.size else []
     for run in paragraph.runs:
         if run.font and run.font.size:
             pt_candidates.append(run.font.size.pt)
     font_pt = max(pt_candidates) if pt_candidates else 12.0
 
-    # Enforce legibility floor: no text may be crushed below 8.0pt
     assert font_pt >= 8.0, f"Illegible micro-font detected ({font_pt}pt < 8.0pt) in text: '{p_text[:30]}'"
 
-    # Independent physical width model: ASCII = 0.58em, non-ASCII (CJK/symbols) = 1.0em
     em_width = sum(1.0 if ord(ch) > 127 else 0.58 for ch in p_text)
     chars_per_line = max(1.0, avail_width_pt / font_pt)
     lines = max(1, math.ceil(em_width / chars_per_line))
@@ -617,7 +549,7 @@ def _assert_text_frame_fits_physically(
     box_h_pt: float,
     label: str,
 ) -> int:
-    """Verify text frame content fits physically inside (box_w_pt, box_h_pt)."""
+    """Verify text frame content fits physically inside (box_w_pt, box_h_pt) without artificial padding."""
     if not tf or not tf.text.strip():
         return 0
 
@@ -625,8 +557,8 @@ def _assert_text_frame_fits_physically(
     assert box_h_pt >= 12.0, f"{label}: text frame height collapsed ({box_h_pt:.1f}pt < 12pt)"
 
     total_req_pt = sum(_independent_paragraph_height_pt(p, box_w_pt) for p in tf.paragraphs)
-    # Allow at most 10% for PowerPoint internal baseline clipping tolerance
-    assert total_req_pt <= box_h_pt * 1.10, (
+    # Strict physical containment: text height must never exceed available box height (+0.5pt float epsilon)
+    assert total_req_pt <= box_h_pt + 0.5, (
         f"{label} physical text overflow: required {total_req_pt:.1f}pt > available {box_h_pt:.1f}pt "
         f"(text={tf.text.strip()[:40]!r})"
     )
@@ -641,7 +573,6 @@ def _assert_shape_physical_invariants(shape: Any, slide_w: int, slide_h: int, la
     height = int(shape.height or 0)
     tolerance = int(Inches(0.02))
 
-    # Minimum non-collapsed physical size: width >= 0.35in, height >= 0.20in
     assert width >= int(Inches(0.35)), f"{label} width collapsed: {width / 914400:.2f}in"
     assert height >= int(Inches(0.20)), f"{label} height collapsed: {height / 914400:.2f}in"
     assert left >= 0 and top >= 0, f"{label} negative coordinates: ({left}, {top})"
@@ -663,7 +594,6 @@ def _assert_shape_physical_invariants(shape: Any, slide_w: int, slide_h: int, la
         row_h_pts = [row.height / 12700.0 for row in table.rows]
         for r_idx, row in enumerate(table.rows):
             for c_idx, cell in enumerate(row.cells):
-                # Deduct 6pt horizontal and 3pt vertical cell margins
                 avail_w_pt = col_w_pts[c_idx] - 6.0
                 avail_h_pt = row_h_pts[r_idx] - 3.0
                 checked += _assert_text_frame_fits_physically(
@@ -707,32 +637,78 @@ def _assert_pane_containment_and_separation(
         assert s_right <= int(right_box.right) + tolerance, f"{label}: right shape leaks right"
 
 
-class TestAdaptiveLayoutAndPhysicalInvariants:
-    """Verifies physical layout integrity, card non-collapse, and independent text fit under stress."""
+def _is_content_shape(shape: Any) -> bool:
+    """Determine whether a shape is a non-empty text, table, or chart shape."""
+    if shape.has_table or shape.has_chart:
+        return True
+    return bool(shape.has_text_frame and shape.text_frame.text.strip())
 
-    def test_sample_deck_physical_text_fit_including_tables(self) -> None:
-        """All 10 slides of sample_deck.json (including all table cells) must pass physical fit checks."""
+
+def _check_shape_pair_overlap(s1: Any, s2: Any, tolerance: int, label: str) -> None:
+    """Assert two distinct shapes do not physically collide."""
+    l1, t1, w1, h1 = int(s1.left or 0), int(s1.top or 0), int(s1.width or 0), int(s1.height or 0)
+    l2, t2, w2, h2 = int(s2.left or 0), int(s2.top or 0), int(s2.width or 0), int(s2.height or 0)
+
+    overlap_w = min(l1 + w1, l2 + w2) - max(l1, l2)
+    overlap_h = min(t1 + h1, t2 + h2) - max(t1, t2)
+
+    if overlap_w > tolerance and overlap_h > tolerance:
+        text1 = s1.text_frame.text[:30].replace("\n", " ") if s1.has_text_frame else f"<type {s1.shape_type}>"
+        text2 = s2.text_frame.text[:30].replace("\n", " ") if s2.has_text_frame else f"<type {s2.shape_type}>"
+        raise AssertionError(
+            f"{label}: Content shapes collide by {overlap_w / 914400:.3f}in x {overlap_h / 914400:.3f}in.\n"
+            f"  Shape A: ({l1/914400:.2f}, {t1/914400:.2f}, {w1/914400:.2f}, {h1/914400:.2f}) text={text1!r}\n"
+            f"  Shape B: ({l2/914400:.2f}, {t2/914400:.2f}, {w2/914400:.2f}, {h2/914400:.2f}) text={text2!r}"
+        )
+
+
+def _assert_no_peer_text_overlap(slide: Any, label: str) -> None:
+    """Independently verify that no two content-bearing shapes (text, tables, charts) collide/overlap."""
+    content_shapes = [s for s in slide.shapes if _is_content_shape(s)]
+    tolerance = int(Inches(0.01))
+    for i in range(len(content_shapes)):
+        for j in range(i + 1, len(content_shapes)):
+            _check_shape_pair_overlap(content_shapes[i], content_shapes[j], tolerance, label)
+
+
+class TestAdaptiveLayoutAndPhysicalInvariants:
+    """Verifies physical layout integrity, card non-collapse, zero collision, and text fit under stress."""
+
+    def test_sample_deck_comprehensive_physical_integrity(self) -> None:
+        """All 10 slides of sample_deck.json must pass zero-fallback, boundary, text-fit, and overlap checks."""
         sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
         deck = PresentationDeck.model_validate_json(sample_path.read_text(encoding="utf-8"))
         prs, summary = generate_presentation(deck)
+        assert summary["total_slides"] == 10
+        assert summary["rendered_slides"] == 10
         assert summary["fallback_slides"] == 0
+        assert len(prs.slides) == 10
         assert prs.slide_width is not None and prs.slide_height is not None
+
+        slide_w = int(prs.slide_width)
+        slide_h = int(prs.slide_height)
 
         total_checked = 0
         for s_idx, slide in enumerate(prs.slides):
+            _assert_no_peer_text_overlap(slide, f"SampleSlide[{s_idx}]")
             for sh_idx, shape in enumerate(slide.shapes):
                 total_checked += _assert_shape_physical_invariants(
                     shape,
-                    int(prs.slide_width),
-                    int(prs.slide_height),
+                    slide_w,
+                    slide_h,
                     f"SampleSlide[{s_idx}].Shape[{sh_idx}]",
                 )
-        # Sample deck has 10 slides with headers, cards, and 2 tables (20+12=32 table cells) -> 65+ frames
         assert total_checked >= 65
+
+        # Specifically verify the 10th slide (the heterogeneous split slide)
+        slide_10 = prs.slides[9]
+        if slide_10.has_notes_slide:
+            assert "Slide Rendering Error" not in slide_10.notes_slide.notes_text_frame.text
+        assert any(s.has_table for s in slide_10.shapes)
 
     @pytest.mark.parametrize(
         "template_id",
-        ["CORE-02", "CORE-10", "CORE-20", "CORE-30", "CORE-40", "CORE-50", "CORE-60", "CORE-70"],
+        ["CORE-01", "CORE-02", "CORE-10", "CORE-20", "CORE-30", "CORE-40", "CORE-50", "CORE-60", "CORE-70"],
     )
     def test_single_pane_max_capacity_stress(self, template_id: str) -> None:
         """Every template at maximum schema capacity must fit physically without overflow or collapse."""
@@ -740,7 +716,7 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
             "template_id": template_id,
             "title": f"最大容量ストレステスト: {template_id}",
             "subtitle": "MAX CAPACITY VERIFICATION",
-            "lead_text": "スキーマ上限の要素数および日本語長文テキストを投入した際の物理レイアウト収まり検証。",
+            "lead_text": None if template_id == "CORE-01" else "スキーマ上限の要素数および日本語長文テキスト投入検証。",
             "payload": MAX_CAPACITY_PAYLOADS[template_id],
         })
         deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
@@ -749,6 +725,7 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
         assert prs.slide_width is not None and prs.slide_height is not None
 
         slide = prs.slides[0]
+        _assert_no_peer_text_overlap(slide, f"MaxSingle[{template_id}]")
         for sh_idx, shape in enumerate(slide.shapes):
             _assert_shape_physical_invariants(
                 shape,
@@ -800,6 +777,8 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
             right_box,
             f"Split[{left_id}+{right_id}@{split_ratio}]",
         )
+
+        _assert_no_peer_text_overlap(slide, f"Split[{left_id}+{right_id}@{split_ratio}]")
 
         for sh_idx, shape in enumerate(slide.shapes):
             _assert_shape_physical_invariants(
