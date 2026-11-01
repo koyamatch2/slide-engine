@@ -13,7 +13,6 @@ from __future__ import annotations
 import inspect
 import itertools
 import json
-import math
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,7 @@ from slide_engine.controller import (
     build_dynamic_dispatch_table,
     generate_presentation,
 )
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import (
     MAX_SLIDES_PER_DECK,
     TEMPLATE_REGISTRY,
@@ -460,6 +459,56 @@ SPLIT_COMBINATIONS = list(
 )
 
 
+def _assert_shape_bounds(shape: Any, slide_w: int, slide_h: int, tolerance: int, label: str) -> None:
+    """Assert an individual shape does not exceed outer presentation canvas boundaries."""
+    left = int(shape.left or 0)
+    top = int(shape.top or 0)
+    width = int(shape.width or 0)
+    height = int(shape.height or 0)
+    assert left >= 0, f"Shape in {label} left < 0: {left}"
+    assert top >= 0, f"Shape in {label} top < 0: {top}"
+    assert left + width <= slide_w + tolerance, f"Shape in {label} right exceeds width: {left + width} > {slide_w}"
+    assert top + height <= slide_h + tolerance, f"Shape in {label} bottom exceeds height: {top + height} > {slide_h}"
+
+
+def _verify_slide_pane_containment(
+    slide: Any,
+    body_top: int,
+    left_box: BoundingBox,
+    right_box: BoundingBox,
+    slide_w: int,
+    slide_h: int,
+    label: str,
+) -> None:
+    """Verify all slide shapes are within boundaries and partitioned cleanly into left/right panes."""
+    tolerance = int(Inches(0.05))
+    left_shapes = []
+    right_shapes = []
+
+    for shape in slide.shapes:
+        _assert_shape_bounds(shape, slide_w, slide_h, tolerance, label)
+        top = int(shape.top or 0)
+        left = int(shape.left or 0)
+        if top >= body_top - tolerance:
+            if left < int(right_box.left) - tolerance:
+                left_shapes.append(shape)
+            else:
+                right_shapes.append(shape)
+
+    if left_shapes and right_shapes:
+        max_left_right = max(int(s.left or 0) + int(s.width or 0) for s in left_shapes)
+        min_right_left = min(int(s.left or 0) for s in right_shapes)
+        assert max_left_right <= int(left_box.right) + tolerance, (
+            f"Left pane shape in {label} crosses into gap/right: {max_left_right} exceeds left pane right {int(left_box.right)}"
+        )
+        assert min_right_left >= int(right_box.left) - tolerance, (
+            f"Right pane shape in {label} crosses into gap/left: {min_right_left} precedes right pane left {int(right_box.left)}"
+        )
+        assert max_left_right <= min_right_left + tolerance, (
+            f"Pane overlap in {label}: left pane edge {max_left_right} exceeds right pane edge {min_right_left}"
+        )
+
+
 class TestSplitCombinations:
     """Verifies all pairwise split-layout combinations across all eligible templates."""
 
@@ -491,42 +540,19 @@ class TestSplitCombinations:
         if slide.has_notes_slide:
             assert "Slide Rendering Error" not in slide.notes_slide.notes_text_frame.text
 
-        # Geometric boundary and pane non-overlap assertions
         assert prs.slide_width is not None and prs.slide_height is not None
-        slide_w, slide_h = int(prs.slide_width), int(prs.slide_height)
-        tolerance = int(Inches(0.05))
-
         _, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
         left_box, right_box = SlideMaster.split_horizontal(body_box, split_ratio=0.5)
 
-        left_shapes = []
-        right_shapes = []
-
-        for s_idx, shape in enumerate(slide.shapes):
-            left = int(shape.left or 0)
-            top = int(shape.top or 0)
-            width = int(shape.width or 0)
-            height = int(shape.height or 0)
-            assert left >= 0, f"Shape {s_idx} in {left_id}+{right_id} left < 0: {left}"
-            assert top >= 0, f"Shape {s_idx} in {left_id}+{right_id} top < 0: {top}"
-            assert left + width <= slide_w + tolerance, f"Shape {s_idx} in {left_id}+{right_id} right exceeds width: {left + width} > {slide_w}"
-            assert top + height <= slide_h + tolerance, f"Shape {s_idx} in {left_id}+{right_id} bottom exceeds height: {top + height} > {slide_h}"
-
-            # Filter shapes located in the body layout area
-            if top >= int(body_box.top) - tolerance:
-                if left < int(right_box.left) - tolerance:
-                    left_shapes.append(shape)
-                else:
-                    right_shapes.append(shape)
-
-        # Assert left and right pane elements do not cross into each other
-        if left_shapes and right_shapes:
-            max_left_right = max(int(s.left or 0) + int(s.width or 0) for s in left_shapes)
-            min_right_left = min(int(s.left or 0) for s in right_shapes)
-            assert max_left_right <= min_right_left + tolerance, (
-                f"Pane overlap detected in {left_id}+{right_id}: "
-                f"left pane right edge {max_left_right} exceeds right pane left edge {min_right_left}"
-            )
+        _verify_slide_pane_containment(
+            slide=slide,
+            body_top=int(body_box.top),
+            left_box=left_box,
+            right_box=right_box,
+            slide_w=int(prs.slide_width),
+            slide_h=int(prs.slide_height),
+            label=f"{left_id}+{right_id}",
+        )
 
     @pytest.mark.parametrize("split_ratio", [0.2, 0.35, 0.5, 0.65, 0.8])
     def test_split_ratios_and_pane_separation(self, split_ratio: float) -> None:
@@ -546,35 +572,81 @@ class TestSplitCombinations:
         assert summary["fallback_slides"] == 0
 
         slide = prs.slides[0]
+        assert prs.slide_width is not None and prs.slide_height is not None
         _, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
         left_box, right_box = SlideMaster.split_horizontal(body_box, split_ratio=split_ratio)
-        tolerance = int(Inches(0.05))
 
-        left_shapes = []
-        right_shapes = []
-        for s in slide.shapes:
-            left = int(s.left or 0)
-            top = int(s.top or 0)
-            if top >= int(body_box.top) - tolerance:
-                if left < int(right_box.left) - tolerance:
-                    left_shapes.append(s)
-                else:
-                    right_shapes.append(s)
+        _verify_slide_pane_containment(
+            slide=slide,
+            body_top=int(body_box.top),
+            left_box=left_box,
+            right_box=right_box,
+            slide_w=int(prs.slide_width),
+            slide_h=int(prs.slide_height),
+            label=f"split_ratio_{split_ratio}",
+        )
 
-        assert len(left_shapes) > 0
-        assert len(right_shapes) > 0
-        max_left_right = max(int(s.left or 0) + int(s.width or 0) for s in left_shapes)
-        min_right_left = min(int(s.left or 0) for s in right_shapes)
-        assert max_left_right <= min_right_left + tolerance
-        assert max_left_right <= int(left_box.right) + tolerance
-        assert min_right_left >= int(right_box.left) - tolerance
-
-    def test_split_boundary_maximum_capacity(self) -> None:
-        """Verify rendering resilience at maximum payload capacities under split layouts."""
-        boundary_payloads = {
+    @pytest.mark.parametrize(
+        "left_t,right_t",
+        [
+            ("CORE-10", "CORE-70"),
+            ("CORE-20", "CORE-60"),
+            ("CORE-40", "CORE-10"),
+            ("CORE-60", "CORE-70"),
+        ],
+    )
+    def test_split_boundary_maximum_capacity(self, left_t: str, right_t: str) -> None:
+        """Verify rendering resilience at maximum payload capacities across diverse template pairs."""
+        boundary_payloads: dict[str, dict[str, Any]] = {
             "CORE-10": {
                 "headers": [f"Header {i}" for i in range(1, 6)],
                 "rows": [[f"Cell {r}-{c}" for c in range(1, 6)] for r in range(1, 16)],
+            },
+            "CORE-20": {
+                "steps": [
+                    {
+                        "step_number": i,
+                        "title": f"Process Step {i}",
+                        "description": f"Detailed execution task for step {i} in automated pipeline.",
+                    }
+                    for i in range(1, 7)
+                ]
+            },
+            "CORE-40": {
+                "x_axis_label": "Operational Efficiency",
+                "y_axis_label": "Strategic Alignment",
+                "top_left": {
+                    "title": "Strategic Invest",
+                    "badge": "P1",
+                    "description": "Long-term foundational investments with high architectural payoff.",
+                },
+                "top_right": {
+                    "title": "Core Strengths",
+                    "badge": "P0",
+                    "description": "Mission-critical revenue generating operations requiring continuous scale.",
+                },
+                "bottom_left": {
+                    "title": "Sunsetting",
+                    "badge": "P3",
+                    "description": "Legacy components slated for graceful decommissioning.",
+                },
+                "bottom_right": {
+                    "title": "Quick Wins",
+                    "badge": "P2",
+                    "description": "Immediate automation tactical steps yielding quick efficiency.",
+                },
+            },
+            "CORE-60": {
+                "metrics": [
+                    {
+                        "label": f"Metric {i}",
+                        "value": f"{i * 125}k",
+                        "unit": "JPY",
+                        "trend": f"+{i * 4}%",
+                        "is_positive": True,
+                    }
+                    for i in range(1, 5)
+                ]
             },
             "CORE-70": {
                 "left_column": {
@@ -593,12 +665,12 @@ class TestSplitCombinations:
         }
 
         slide_def = SlideDefinition.model_validate({
-            "template_id": "CORE-10",
-            "title": "Maximum Boundary Split",
+            "template_id": left_t,
+            "title": f"Max Capacity Split: {left_t} + {right_t}",
             "lead_text": "Boundary stress testing of high density content panes.",
-            "payload": boundary_payloads["CORE-10"],
-            "right_template_id": "CORE-70",
-            "right_payload": boundary_payloads["CORE-70"],
+            "payload": boundary_payloads[left_t],
+            "right_template_id": right_t,
+            "right_payload": boundary_payloads[right_t],
             "split_ratio": 0.5,
         })
 
@@ -622,23 +694,47 @@ class TestSplitCombinations:
 
 
 def _estimate_text_frame_required_height(tf: Any, box_w: float) -> float:
-    """Estimate total required height in inches for text inside a text frame."""
+    """Estimate total required height in inches for text inside a text frame using CJK font engine logic."""
     total_height = 0.0
     for paragraph in tf.paragraphs:
         p_text = paragraph.text.strip()
         if not p_text:
             continue
         pt_size = paragraph.font.size.pt if paragraph.font.size else 12.0
-        font_height_in = pt_size / 72.0
-
-        fullwidth_count = sum(1 for c in p_text if ord(c) > 127)
-        halfwidth_count = len(p_text) - fullwidth_count
-        effective_chars = fullwidth_count + (halfwidth_count * 0.55)
-
-        chars_per_line = max(1.0, box_w / (font_height_in * 1.0))
-        line_count = math.ceil(effective_chars / chars_per_line)
-        total_height += line_count * (font_height_in * 1.3)
+        req_pt = FontEngine.estimate_height_pt(p_text, box_w * 72.0, pt_size)
+        total_height += req_pt / 72.0
     return total_height
+
+
+def _check_shape_text_overflow(shape: Any, slide_idx: int, shape_idx: int, tolerance_ratio: float) -> int:
+    """Check text frame or table cells for vertical overflow. Returns number of checked frames."""
+    checked = 0
+    if shape.has_text_frame and shape.text_frame.text.strip():
+        box_w = float(shape.width) / 914400.0
+        box_h = float(shape.height) / 914400.0
+        req_h = _estimate_text_frame_required_height(shape.text_frame, box_w)
+        assert req_h <= box_h * tolerance_ratio, (
+            f"Slide {slide_idx} Shape {shape_idx} text overflow: "
+            f"required height {req_h:.2f}in exceeds box height {box_h:.2f}in"
+        )
+        checked += 1
+
+    if shape.has_table:
+        table = shape.table
+        col_widths = [float(col.width) / 914400.0 for col in table.columns]
+        row_heights = [float(row.height) / 914400.0 for row in table.rows]
+        for r_idx, row in enumerate(table.rows):
+            for c_idx, cell in enumerate(row.cells):
+                if cell.text_frame and cell.text_frame.text.strip():
+                    c_w = col_widths[c_idx]
+                    r_h = row_heights[r_idx]
+                    req_h = _estimate_text_frame_required_height(cell.text_frame, c_w)
+                    assert req_h <= r_h * tolerance_ratio, (
+                        f"Slide {slide_idx} Table cell ({r_idx},{c_idx}) overflow: "
+                        f"required height {req_h:.2f}in exceeds cell height {r_h:.2f}in"
+                    )
+                    checked += 1
+    return checked
 
 
 class TestTextOverflowEstimation:
@@ -651,24 +747,14 @@ class TestTextOverflowEstimation:
         prs, summary = generate_presentation(deck)
         assert summary["fallback_slides"] == 0
 
-        overflow_tolerance_ratio = 1.30  # Allow 30% tolerance for tight vertical paddings/line spacing
+        overflow_tolerance_ratio = 1.15  # Strict 15% padding allowance
 
         checked_text_frames = 0
         for slide_idx, slide in enumerate(prs.slides):
             for shape_idx, shape in enumerate(slide.shapes):
-                if not shape.has_text_frame or not shape.text_frame.text.strip():
-                    continue
-
-                checked_text_frames += 1
-                box_w = float(shape.width) / 914400.0  # EMUs to inches: 914400 EMUs = 1 inch
-                box_h = float(shape.height) / 914400.0  # EMUs to inches
-                assert box_w > 0 and box_h > 0
-
-                req_h = _estimate_text_frame_required_height(shape.text_frame, box_w)
-                assert req_h <= box_h * overflow_tolerance_ratio, (
-                    f"Slide {slide_idx} Shape {shape_idx} text overflow: "
-                    f"required height {req_h:.2f}in exceeds box height {box_h:.2f}in"
+                checked_text_frames += _check_shape_text_overflow(
+                    shape, slide_idx, shape_idx, overflow_tolerance_ratio
                 )
 
-        assert checked_text_frames > 20, f"Expected >20 text frames checked, got {checked_text_frames}"
+        assert checked_text_frames > 40, f"Expected >40 text frames checked (including tables), got {checked_text_frames}"
 
