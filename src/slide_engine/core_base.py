@@ -1,33 +1,62 @@
 """Core base module providing layout, geometry, typography, and styling primitives.
 
 This module acts as the Single Source of Truth (SSOT) for design tokens,
-coordinates, slide master layout resolution, and typography calculation.
-It depends only on the lowest-level `pptx_adapter` primitive layer to maintain a strict unidirectional DAG.
+coordinates, slide master layout resolution, and shape canvas manipulations.
+It strictly avoids importing other application modules (except the low-level
+pptx_adapter primitive wrapper) to maintain a clean DAG.
 """
 
 from __future__ import annotations
 
 import math
+import unicodedata
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Length, Pt
 
 from slide_engine.pptx_adapter import (
-    BoundingBox as BoundingBox,
-)
-from slide_engine.pptx_adapter import (
-    ShapeBuilder as ShapeBuilder,
-)
-from slide_engine.pptx_adapter import (
+    add_rounded_card_shape,
+    add_styled_chart,
+    add_textbox_shape,
+    build_chart_data,
+    clean_slide_shapes,
     create_rgb_color,
+    set_cell_solid_fill,
 )
 
 ColorType = RGBColor
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
     from pptx.presentation import Presentation as PresentationType
+    from pptx.shapes.autoshape import Shape
     from pptx.slide import Slide, SlideLayout
+    from pptx.table import _Cell
+
+
+@dataclass(frozen=True)
+class BoundingBox:
+    """Represents a 2D rectangular bounding box on a slide canvas."""
+
+    left: Length
+    top: Length
+    width: Length
+    height: Length
+
+    @property
+    def right(self) -> Length:
+        """Calculate right boundary."""
+        return Length(self.left + self.width)
+
+    @property
+    def bottom(self) -> Length:
+        """Calculate bottom boundary."""
+        return Length(self.top + self.height)
 
 
 class SlideMaster:
@@ -76,7 +105,14 @@ class SlideMaster:
 
     @classmethod
     def get_body_box_with_lead(cls, has_lead_text: bool) -> tuple[BoundingBox | None, BoundingBox]:
-        """Compute bounding boxes for optional lead text and remaining body content."""
+        """Compute bounding boxes for optional lead text and remaining body content.
+
+        Args:
+            has_lead_text: Whether lead text is present.
+
+        Returns:
+            A tuple of (lead_box, remaining_body_box).
+        """
         if not has_lead_text:
             return None, cls.CONTENT_BOX
 
@@ -105,7 +141,16 @@ class SlideMaster:
         split_ratio: float = 0.5,
         gap: Length | None = None,
     ) -> tuple[BoundingBox, BoundingBox]:
-        """Split a bounding box horizontally into left and right panes."""
+        """Split a bounding box horizontally into left and right panes.
+
+        Args:
+            box: Parent bounding box.
+            split_ratio: Width ratio for the left pane (0.0 to 1.0).
+            gap: Space between left and right panes.
+
+        Returns:
+            Tuple of (left_box, right_box).
+        """
         effective_gap = cls.DEFAULT_SPLIT_GAP if gap is None else gap
         available_width = box.width - effective_gap
         left_width = Length(int(available_width * split_ratio))
@@ -118,64 +163,59 @@ class SlideMaster:
 
     @staticmethod
     def resolve_slide_layout(prs: PresentationType, slide_type: str) -> SlideLayout:
-        """Resolve the appropriate master slide layout by name or fallback index."""
+        """Resolve the appropriate master slide layout by name or fallback index.
+
+        Args:
+            prs: Presentation instance.
+            slide_type: 'cover', 'agenda', 'body', or 'blank'.
+
+        Returns:
+            The resolved SlideLayout object.
+        """
         name_targets: dict[str, list[str]] = {
             "cover": ["title", "cover", "タイトル", "表紙"],
             "agenda": ["section", "header", "中扉", "セクション"],
-            "body": ["title and content", "title only", "タイトルのみ", "白紙", "blank"],
+            "body": ["blank", "title and content", "白紙", "コンテンツ"],
             "blank": ["blank", "白紙"],
         }
         targets = name_targets.get(slide_type, ["blank", "白紙"])
 
+        # Name-based match (case-insensitive)
         for layout in prs.slide_layouts:
-            layout_name_lower = layout.name.lower()
-            for target in targets:
-                if target in layout_name_lower:
-                    return layout
+            layout_name = layout.name.lower()
+            if any(target in layout_name for target in targets):
+                return layout
 
+        # Fallback index logic: 0 for cover, 6 for blank, otherwise default first available
+        if slide_type == "cover" and len(prs.slide_layouts) > 0:
+            return prs.slide_layouts[0]
         if len(prs.slide_layouts) > 6:
             return prs.slide_layouts[6]
         return prs.slide_layouts[0]
 
 
 class FontEngine:
-    """Calculates CJK-aware text wrapping and dynamic point scaling."""
+    """Calculates text wrapping and dynamic point scaling."""
 
-    FULLWIDTH_CHAR_RATIO = 1.0
-    HALFWIDTH_CHAR_RATIO = 0.58
+    # Approximate width per character relative to font size (Heuristic factor)
     CHAR_WIDTH_RATIO = 0.58
+    FULLWIDTH_CHAR_RATIO = 1.0
 
     @staticmethod
     def pt(size: float) -> Length:
-        """Safely construct a Length point value conforming to banned-api rule."""
+        """Safely construct a Pt instance conforming to banned-api rule."""
         return Length(Pt(size))
 
     @classmethod
-    def effective_char_count(cls, text: str) -> float:
-        """Compute effective character width in em units accounting for CJK fullwidth characters."""
-        fullwidth = sum(1 for c in text if ord(c) > 127)
-        halfwidth = len(text) - fullwidth
-        return (fullwidth * cls.FULLWIDTH_CHAR_RATIO) + (halfwidth * cls.HALFWIDTH_CHAR_RATIO)
-
-    @classmethod
-    def estimate_height_pt(
-        cls,
-        text: str,
-        box_width_pt: float,
-        font_pt: float,
-        line_height_multiplier: float = 1.3,
-    ) -> float:
-        """Estimate required vertical height in points for given text and box width."""
-        avail_em = max(1.0, box_width_pt / max(1.0, font_pt))
-        lines_count = 0
-        for paragraph in text.split("\n"):
-            stripped = paragraph.strip()
-            if not stripped:
-                lines_count += 1
+    def _effective_text_em_width(cls, text: str) -> float:
+        """Compute effective width in em units using Unicode East Asian Width properties."""
+        total_em = 0.0
+        for char in text:
+            if unicodedata.east_asian_width(char) in ("F", "W", "A"):
+                total_em += cls.FULLWIDTH_CHAR_RATIO
             else:
-                eff_chars = cls.effective_char_count(stripped)
-                lines_count += max(1, math.ceil(eff_chars / avail_em))
-        return lines_count * (font_pt * line_height_multiplier)
+                total_em += cls.CHAR_WIDTH_RATIO
+        return total_em
 
     @classmethod
     def calculate_font_size(
@@ -184,10 +224,22 @@ class FontEngine:
         box_width: Length,
         box_height: Length,
         max_pt: float = 14.0,
-        min_pt: float = 8.0,
+        min_pt: float = 9.0,
         line_height_multiplier: float = 1.3,
     ) -> Length:
-        """Compute the optimal font size to fit text within the target bounding box."""
+        """Compute the optimal font size to fit text within the target bounding box.
+
+        Args:
+            text: Text content to render.
+            box_width: Available width.
+            box_height: Available height.
+            max_pt: Maximum font size in points.
+            min_pt: Minimum font size in points.
+            line_height_multiplier: Inter-line spacing multiplier.
+
+        Returns:
+            Optimal Pt value.
+        """
         if not text:
             return cls.pt(max_pt)
 
@@ -196,17 +248,128 @@ class FontEngine:
         box_height_pt = box_height.pt
 
         while target_pt >= min_pt:
-            req_height = cls.estimate_height_pt(
-                text,
-                box_width_pt,
-                target_pt,
-                line_height_multiplier,
-            )
-            if req_height <= box_height_pt:
+            avail_em = max(1.0, box_width_pt / target_pt)
+            lines_count = 0
+            for paragraph in text.split("\n"):
+                if not paragraph:
+                    lines_count += 1
+                else:
+                    eff_em = cls._effective_text_em_width(paragraph)
+                    lines_count += max(1, math.ceil(eff_em / avail_em))
+
+            total_text_height = lines_count * (target_pt * line_height_multiplier)
+            if total_text_height <= box_height_pt:
                 return cls.pt(target_pt)
             target_pt -= 0.5
 
         return cls.pt(min_pt)
+
+
+class ShapeBuilder:
+    """Helper methods for constructing PowerPoint shapes, borders, and text boxes."""
+
+    @staticmethod
+    def add_card(
+        slide: Slide,
+        box: BoundingBox,
+        bg_color: RGBColor | None = None,
+        border_color: RGBColor | None = None,
+        border_width_pt: float = 1.0,
+    ) -> Shape:
+        """Add a rounded or standard rectangular card shape.
+
+        Args:
+            slide: Target slide.
+            box: BoundingBox coordinates.
+            bg_color: Fill color.
+            border_color: Line border color.
+            border_width_pt: Border width in points.
+
+        Returns:
+            The created Shape instance.
+        """
+        return add_rounded_card_shape(
+            slide=slide,
+            left=box.left,
+            top=box.top,
+            width=box.width,
+            height=box.height,
+            bg_color=bg_color,
+            border_color=border_color,
+            border_width=FontEngine.pt(border_width_pt),
+        )
+
+    @staticmethod
+    def add_textbox(
+        slide: Slide,
+        box: BoundingBox,
+        margin_zero: bool = True,
+    ) -> Shape:
+        """Add an empty text box with optional zero-margin reset.
+
+        Args:
+            slide: Target slide.
+            box: BoundingBox coordinates.
+            margin_zero: Whether to set text frame internal margins to 0.
+
+        Returns:
+            The created Shape instance.
+        """
+        return add_textbox_shape(
+            slide=slide,
+            left=box.left,
+            top=box.top,
+            width=box.width,
+            height=box.height,
+            margin_zero=margin_zero,
+        )
+
+    @staticmethod
+    def set_cell_solid_fill(cell: _Cell, color: RGBColor) -> None:
+        """Apply solid fill and RGB color to a table cell."""
+        set_cell_solid_fill(cell, color)
+
+    @staticmethod
+    def build_chart_data(
+        categories: list[str],
+        series_items: Sequence[tuple[str, Sequence[float]]],
+    ) -> CategoryChartData:
+        """Construct CategoryChartData safely encapsulating untyped pptx calls."""
+        return build_chart_data(categories, series_items)
+
+    @staticmethod
+    def add_styled_chart(
+        slide: Slide,
+        chart_type: XL_CHART_TYPE,
+        box: BoundingBox,
+        chart_data: CategoryChartData,
+        font_family: str,
+        series_colors: Sequence[RGBColor],
+    ) -> None:
+        """Add and style a chart within the target bounding box."""
+        add_styled_chart(
+            slide=slide,
+            chart_type=chart_type,
+            left=box.left,
+            top=box.top,
+            width=box.width,
+            height=box.height,
+            chart_data=chart_data,
+            font_family=font_family,
+            series_colors=series_colors,
+        )
+
+    @staticmethod
+    def clean_slide_canvas(slide: Slide) -> None:
+        """Purge empty shapes and master placeholders while preserving backgrounds.
+
+        Safely iterates over shapes in reverse to delete raw `sp` elements without
+        affecting the master presentation background or static master graphics.
+
+        Args:
+            slide: Target slide.
+        """
+        clean_slide_shapes(slide)
 
 
 def render_standard_header(
@@ -215,7 +378,15 @@ def render_standard_header(
     subtitle: str | None = None,
     lead_text: str | None = None,
 ) -> None:
-    """Render standardized corporate slide header with optional lead text."""
+    """Render standardized corporate slide header with optional lead text.
+
+    Args:
+        slide: Target slide.
+        title: Main slide title.
+        subtitle: Optional tracker/category subtitle.
+        lead_text: Optional one-sentence executive summary lead text.
+    """
+    # Header zone: Top 0.600 to 1.600
     header_box = BoundingBox(
         left=SlideMaster.MARGIN_LEFT,
         top=SlideMaster.MARGIN_TOP,
@@ -225,6 +396,7 @@ def render_standard_header(
     textbox = ShapeBuilder.add_textbox(slide, header_box)
     tf = textbox.text_frame
 
+    # 1. Subtitle / Tracker Category
     if subtitle:
         p_sub = tf.paragraphs[0]
         p_sub.text = subtitle.upper()
@@ -239,6 +411,7 @@ def render_standard_header(
         p_title = tf.paragraphs[0]
         title_avail_h = header_box.height
 
+    # 2. Main Slide Title
     p_title.text = title
     p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
     p_title.font.size = FontEngine.calculate_font_size(
@@ -251,9 +424,11 @@ def render_standard_header(
     p_title.font.bold = True
     p_title.font.color.rgb = SlideMaster.COLORS["primary"]
 
+    # 3. Optional Lead Text Box
     if lead_text:
         lead_box, _ = SlideMaster.get_body_box_with_lead(has_lead_text=True)
         if lead_box:
+            # Subtle card backdrop for lead text
             ShapeBuilder.add_card(
                 slide,
                 lead_box,
@@ -263,9 +438,9 @@ def render_standard_header(
             )
             inner_box = BoundingBox(
                 left=Length(lead_box.left + Inches(0.200)),
-                top=Length(lead_box.top + Inches(0.100)),
+                top=Length(lead_box.top + Inches(0.120)),
                 width=Length(lead_box.width - Inches(0.400)),
-                height=Length(lead_box.height - Inches(0.200)),
+                height=Length(lead_box.height - Inches(0.240)),
             )
             tb_lead = ShapeBuilder.add_textbox(slide, inner_box)
             p_lead = tb_lead.text_frame.paragraphs[0]
@@ -276,7 +451,7 @@ def render_standard_header(
                 inner_box.width,
                 inner_box.height,
                 max_pt=12.0,
-                min_pt=8.5,
+                min_pt=9.0,
             )
             p_lead.font.bold = True
             p_lead.font.color.rgb = SlideMaster.COLORS["secondary"]

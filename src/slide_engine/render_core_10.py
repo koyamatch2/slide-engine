@@ -33,14 +33,12 @@ def _render_data_row(
     row_idx: int,
     row_data: list[str],
     num_cols: int,
-    col_width: Length,
-    row_height: Length,
+    avail_w: Length,
+    avail_h: Length,
     is_highlighted: bool,
 ) -> None:
     """Render a single data row within the table."""
     bg_col, text_col = _resolve_row_colors(is_highlighted, row_idx % 2 == 0)
-    avail_w = Length(max(int(FontEngine.pt(12)), int(col_width - FontEngine.pt(8))))
-    avail_h = Length(max(int(FontEngine.pt(10)), int(row_height - FontEngine.pt(4))))
 
     for col_idx in range(num_cols):
         cell = table.cell(row_idx + 1, col_idx)
@@ -58,7 +56,7 @@ def _render_data_row(
             avail_w,
             avail_h,
             max_pt=10.0,
-            min_pt=6.5,
+            min_pt=8.0,
         )
         p.font.bold = is_highlighted
         p.font.color.rgb = text_col
@@ -86,8 +84,9 @@ def render_core_10(slide: Slide, payload: Core10Payload, box: BoundingBox) -> No
     for r_idx in range(num_rows):
         table.rows[r_idx].height = row_height
 
-    avail_w = Length(max(int(FontEngine.pt(12)), int(col_width - FontEngine.pt(8))))
-    avail_h = Length(max(int(FontEngine.pt(10)), int(row_height - FontEngine.pt(4))))
+    # Deduct cell horizontal (6pt) and vertical (3pt) margins for font fitting
+    avail_w = Length(max(int(FontEngine.pt(12)), int(col_width - FontEngine.pt(6.0))))
+    avail_h = Length(max(int(FontEngine.pt(10)), int(row_height - FontEngine.pt(3.0))))
 
     # 2. Render Header Row
     for col_idx, header_text in enumerate(payload.headers):
@@ -106,7 +105,7 @@ def render_core_10(slide: Slide, payload: Core10Payload, box: BoundingBox) -> No
             avail_w,
             avail_h,
             max_pt=11.0,
-            min_pt=7.0,
+            min_pt=8.0,
         )
         p.font.bold = True
         p.font.color.rgb = SlideMaster.COLORS["text_light"]
@@ -116,4 +115,4 @@ def render_core_10(slide: Slide, payload: Core10Payload, box: BoundingBox) -> No
         is_highlighted = (
             payload.highlight_row_index is not None and row_idx == payload.highlight_row_index
         )
-        _render_data_row(table, row_idx, row_data, num_cols, col_width, row_height, is_highlighted)
+        _render_data_row(table, row_idx, row_data, num_cols, avail_w, avail_h, is_highlighted)

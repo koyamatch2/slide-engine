@@ -231,6 +231,46 @@ def _validate_single_pane(template_id: str, payload_data: Any, is_right: bool = 
     return spec.payload_type.model_validate(payload_data)
 
 
+def _check_core10_density(payload: Core10Payload, pane: str, tid: str) -> None:
+    if len(payload.rows) > 8:
+        raise ValueError(
+            f"{pane} table '{tid}' in split layout exceeds legibility limit: "
+            f"{len(payload.rows)} rows > 8 rows maximum."
+        )
+    if len(payload.headers) > 4:
+        raise ValueError(
+            f"{pane} table '{tid}' in split layout exceeds legibility limit: "
+            f"{len(payload.headers)} columns > 4 columns maximum."
+        )
+
+
+def _check_core20_density(payload: Core20Payload, pane: str, tid: str) -> None:
+    if len(payload.steps) > 4:
+        raise ValueError(
+            f"{pane} process flow '{tid}' in split layout exceeds legibility limit: "
+            f"{len(payload.steps)} steps > 4 steps maximum."
+        )
+
+
+def _check_core70_density(payload: Core70Payload, pane: str, tid: str) -> None:
+    max_pts = max(len(payload.left_column.points), len(payload.right_column.points))
+    if max_pts > 4:
+        raise ValueError(
+            f"{pane} comparison '{tid}' in split layout exceeds legibility limit: "
+            f"{max_pts} points > 4 points maximum."
+        )
+
+
+def _validate_split_pane_density(template_id: str, payload: BasePayload, pane_name: str) -> None:
+    """Enforce physical legibility ceilings when a template is rendered inside a split pane."""
+    if isinstance(payload, Core10Payload):
+        _check_core10_density(payload, pane_name, template_id)
+    elif isinstance(payload, Core20Payload):
+        _check_core20_density(payload, pane_name, template_id)
+    elif isinstance(payload, Core70Payload):
+        _check_core70_density(payload, pane_name, template_id)
+
+
 class SlideDefinition(BaseModel):
     """Complete specification for a single presentation slide."""
 
@@ -245,7 +285,7 @@ class SlideDefinition(BaseModel):
     # Horizontal split layout options
     right_template_id: str | None = None
     right_payload: Any | None = None
-    split_ratio: float = Field(default=0.5, ge=0.2, le=0.8)
+    split_ratio: float = Field(default=0.5, ge=0.25, le=0.75)
 
     @model_validator(mode="after")
     def validate_slide_integrity(self) -> SlideDefinition:
@@ -271,6 +311,10 @@ class SlideDefinition(BaseModel):
         right_obj = _validate_single_pane(effective_right_id, self.right_payload, is_right=True)
         object.__setattr__(self, "right_template_id", effective_right_id)
         object.__setattr__(self, "right_payload", right_obj)
+
+        # 5. Enforce split pane physical density constraints
+        _validate_split_pane_density(self.template_id, left_obj, "Left")
+        _validate_split_pane_density(effective_right_id, right_obj, "Right")
         return self
 
 

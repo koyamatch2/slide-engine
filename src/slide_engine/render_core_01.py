@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pptx.util import Inches
+from pptx.util import Inches, Length
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import Core01Payload
@@ -44,21 +44,36 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
     tb_title = ShapeBuilder.add_textbox(slide, title_box)
     tf_title = tb_title.text_frame
 
+    title_budget_h = Length(int(COVER_HEIGHT * 0.55)) if payload.subtitle else COVER_HEIGHT
+
     # Main Title
     p_title = tf_title.paragraphs[0]
     p_title.text = payload.title
     p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_title.font.size = FontEngine.pt(32.0)
+    p_title.font.size = FontEngine.calculate_font_size(
+        payload.title,
+        COVER_WIDTH,
+        title_budget_h,
+        max_pt=32.0,
+        min_pt=18.0,
+    )
     p_title.font.bold = True
     p_title.font.color.rgb = SlideMaster.COLORS["primary"]
     p_title.space_after = FontEngine.pt(14.0)
 
     # Subtitle
     if payload.subtitle:
+        sub_budget_h = Length(int(COVER_HEIGHT * 0.35))
         p_sub = tf_title.add_paragraph()
         p_sub.text = payload.subtitle
         p_sub.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_sub.font.size = FontEngine.pt(16.0)
+        p_sub.font.size = FontEngine.calculate_font_size(
+            payload.subtitle,
+            COVER_WIDTH,
+            sub_budget_h,
+            max_pt=16.0,
+            min_pt=10.0,
+        )
         p_sub.font.color.rgb = SlideMaster.COLORS["secondary"]
 
     # 2. Presenter and Date Metadata Box
@@ -78,9 +93,16 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
         meta_parts.append(payload.date_str)
 
     if meta_parts:
+        meta_str = "  |  ".join(meta_parts)
         p_meta = tf_meta.paragraphs[0]
-        p_meta.text = "  |  ".join(meta_parts)
+        p_meta.text = meta_str
         p_meta.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_meta.font.size = FontEngine.pt(11.0)
+        p_meta.font.size = FontEngine.calculate_font_size(
+            meta_str,
+            COVER_WIDTH,
+            META_HEIGHT,
+            max_pt=11.0,
+            min_pt=9.0,
+        )
         p_meta.font.bold = True
         p_meta.font.color.rgb = SlideMaster.COLORS["text_muted"]

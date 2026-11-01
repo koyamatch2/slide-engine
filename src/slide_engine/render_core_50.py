@@ -55,10 +55,17 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
     tb_center = ShapeBuilder.add_textbox(slide, frame_box)
     tf_center = tb_center.text_frame
     p_center = tf_center.paragraphs[0]
-    p_center.text = f"[ 画像・図解配置エリア: {payload.placeholder_label} ]"
+    center_text = f"[ 画像・図解配置エリア: {payload.placeholder_label} ]"
+    p_center.text = center_text
     p_center.alignment = PP_ALIGN.CENTER
     p_center.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_center.font.size = FontEngine.pt(13.0)
+    p_center.font.size = FontEngine.calculate_font_size(
+        center_text,
+        frame_box.width,
+        frame_box.height,
+        max_pt=13.0,
+        min_pt=9.0,
+    )
     p_center.font.bold = True
     p_center.font.color.rgb = SlideMaster.COLORS["text_muted"]
 
@@ -72,8 +79,15 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
         )
         tb_caption = ShapeBuilder.add_textbox(slide, caption_box)
         p_cap = tb_caption.text_frame.paragraphs[0]
-        p_cap.text = f"※ {payload.caption}"
+        cap_text = f"※ {payload.caption}"
+        p_cap.text = cap_text
         p_cap.alignment = PP_ALIGN.LEFT
         p_cap.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_cap.font.size = FontEngine.pt(9.5)
+        p_cap.font.size = FontEngine.calculate_font_size(
+            cap_text,
+            caption_box.width,
+            caption_box.height,
+            max_pt=9.5,
+            min_pt=8.0,
+        )
         p_cap.font.color.rgb = SlideMaster.COLORS["text_muted"]

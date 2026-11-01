@@ -19,9 +19,9 @@ if TYPE_CHECKING:
 
 
 # Matrix Geometry Constants
-AXIS_LABEL_SIZE = Inches(0.400)
-GRID_GAP = Inches(0.200)
-QUADRANT_PADDING = Inches(0.200)
+AXIS_LABEL_SIZE = Inches(0.350)
+GRID_GAP = Inches(0.180)
+QUADRANT_PADDING = Inches(0.180)
 
 
 def _render_quadrant_card(
@@ -38,14 +38,20 @@ def _render_quadrant_card(
         border_width_pt=1.0,
     )
 
+    pad_x = Length(min(int(QUADRANT_PADDING), int(box.width * 0.08)))
+    pad_y = Length(min(int(QUADRANT_PADDING), int(box.height * 0.08)))
+
     inner_box = BoundingBox(
-        left=Length(box.left + QUADRANT_PADDING),
-        top=Length(box.top + QUADRANT_PADDING),
-        width=Length(box.width - (QUADRANT_PADDING * 2)),
-        height=Length(box.height - (QUADRANT_PADDING * 2)),
+        left=Length(box.left + pad_x),
+        top=Length(box.top + pad_y),
+        width=Length(max(int(Inches(0.400)), int(box.width - (pad_x * 2)))),
+        height=Length(max(int(Inches(0.300)), int(box.height - (pad_y * 2)))),
     )
     tb = ShapeBuilder.add_textbox(slide, inner_box)
     tf = tb.text_frame
+
+    header_avail_h = Length(int(inner_box.height * 0.35))
+    desc_avail_h = Length(int(inner_box.height * 0.60))
 
     # Quadrant Title and Optional Badge
     p_header = tf.paragraphs[0]
@@ -54,16 +60,28 @@ def _render_quadrant_card(
         header_text = f"[{quadrant.badge}] {header_text}"
     p_header.text = header_text
     p_header.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_header.font.size = FontEngine.pt(13.0)
+    p_header.font.size = FontEngine.calculate_font_size(
+        header_text,
+        inner_box.width,
+        header_avail_h,
+        max_pt=12.5,
+        min_pt=8.5,
+    )
     p_header.font.bold = True
     p_header.font.color.rgb = SlideMaster.COLORS["primary"]
-    p_header.space_after = FontEngine.pt(8.0)
+    p_header.space_after = FontEngine.pt(4.0)
 
     # Description
     p_desc = tf.add_paragraph()
     p_desc.text = quadrant.description
     p_desc.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_desc.font.size = FontEngine.pt(10.0)
+    p_desc.font.size = FontEngine.calculate_font_size(
+        quadrant.description,
+        inner_box.width,
+        desc_avail_h,
+        max_pt=10.0,
+        min_pt=8.0,
+    )
     p_desc.font.color.rgb = SlideMaster.COLORS["text_dark"]
 
 
@@ -76,28 +94,39 @@ def render_core_40(slide: Slide, payload: Core40Payload, box: BoundingBox) -> No
         box: Content BoundingBox.
     """
     # 1. Axis Label Zones
-    # Top X-axis label
+    axis_h = Length(min(int(AXIS_LABEL_SIZE), int(box.height * 0.10)))
     tb_x = ShapeBuilder.add_textbox(
         slide,
-        BoundingBox(box.left, box.top, box.width, AXIS_LABEL_SIZE),
+        BoundingBox(box.left, box.top, box.width, axis_h),
     )
     p_x = tb_x.text_frame.paragraphs[0]
-    p_x.text = f"◀ {payload.x_axis_label} ▶"
+    axis_text = f"◀ {payload.x_axis_label}  |  {payload.y_axis_label} ▶"
+    p_x.text = axis_text
     p_x.alignment = PP_ALIGN.CENTER
     p_x.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_x.font.size = FontEngine.pt(11.0)
+    p_x.font.size = FontEngine.calculate_font_size(
+        axis_text,
+        box.width,
+        axis_h,
+        max_pt=11.0,
+        min_pt=8.0,
+    )
     p_x.font.bold = True
     p_x.font.color.rgb = SlideMaster.COLORS["secondary"]
 
     # 2. Quadrants Layout Calculation
-    quad_top = Length(box.top + AXIS_LABEL_SIZE + Inches(0.100))
-    quad_height = Length(int((box.height - AXIS_LABEL_SIZE - Inches(0.100) - GRID_GAP) / 2))
-    quad_width = Length(int((box.width - GRID_GAP) / 2))
+    gap_x = Length(min(int(GRID_GAP), int(box.width * 0.04)))
+    gap_y = Length(min(int(GRID_GAP), int(box.height * 0.04)))
+    top_offset = Length(min(int(Inches(0.080)), int(box.height * 0.02)))
+
+    quad_top = Length(box.top + axis_h + top_offset)
+    quad_height = Length(int((box.height - axis_h - top_offset - gap_y) / 2))
+    quad_width = Length(int((box.width - gap_x) / 2))
 
     col1_left = box.left
-    col2_left = Length(box.left + quad_width + GRID_GAP)
+    col2_left = Length(box.left + quad_width + gap_x)
     row1_top = quad_top
-    row2_top = Length(quad_top + quad_height + GRID_GAP)
+    row2_top = Length(quad_top + quad_height + gap_y)
 
     # Top-Left
     _render_quadrant_card(

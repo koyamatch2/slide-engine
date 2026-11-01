@@ -6,13 +6,15 @@ Verifies:
 3. Complex layouts (lead text vertical offset, heterogeneous split).
 4. Fail-soft behavior (CORE-00 fallback on exceptions).
 5. Clean canvas purging and master background preservation.
+6. Direct unit verification of CJK-aware FontEngine scaling.
+7. Adaptive grid layout and physical non-overflow invariants under extreme split and max-capacity conditions.
 """
 
 from __future__ import annotations
 
 import inspect
-import itertools
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +105,26 @@ class TestSchemaValidationAndDefenses:
         )
         assert payload.placeholder_label == "System Topology Diagram"
         assert payload.caption == "Manual placement placeholder"
+
+    def test_split_overdensity_raises_error(self) -> None:
+        """Split layout must reject payloads exceeding physical legibility limits (e.g. 15-row table)."""
+        with pytest.raises(ValueError, match="exceeds legibility limit"):
+            SlideDefinition.model_validate({
+                "template_id": "CORE-10",
+                "title": "Overdense Split Table",
+                "payload": {
+                    "headers": ["Col 1", "Col 2"],
+                    "rows": [[f"Val {i}-1", f"Val {i}-2"] for i in range(12)],  # 12 rows > 8 max in split
+                },
+                "right_template_id": "CORE-60",
+                "right_payload": {
+                    "metrics": [
+                        {"label": "A", "value": "1"},
+                        {"label": "B", "value": "2"},
+                    ]
+                },
+                "split_ratio": 0.5,
+            })
 
 
 class TestGeometryAndLayout:
@@ -404,357 +426,385 @@ class TestFailSoftExecution:
         assert "Strict Generation Failure: 1 slide(s)" in captured.err
 
 
-SPLIT_TEMPLATES_SAMPLE_PAYLOADS: dict[str, dict[str, Any]] = {
+class TestFontEngineUnit:
+    """Direct unit tests for FontEngine without self-referential helpers."""
+
+    def test_cjk_fullwidth_scales_smaller_than_ascii_for_same_char_count(self) -> None:
+        """Japanese fullwidth characters must trigger font reduction earlier than ASCII of equal length."""
+        box_w = Length(Inches(2.0))
+        box_h = Length(Inches(0.60))
+
+        ascii_text = "A" * 32
+        cjk_text = "あ" * 32
+
+        ascii_font = FontEngine.calculate_font_size(ascii_text, box_w, box_h, max_pt=14.0, min_pt=8.0)
+        cjk_font = FontEngine.calculate_font_size(cjk_text, box_w, box_h, max_pt=14.0, min_pt=8.0)
+
+        # 32 ASCII chars (~18.5 em) fit in 2 lines at 14pt (36.4pt < 43.2pt); 32 CJK chars (32 em) require 4 lines and must shrink
+        assert ascii_font.pt == 14.0
+        assert cjk_font.pt <= 11.5
+        assert cjk_font.pt >= 8.0
+
+    def test_font_size_respects_max_and_min_bounds(self) -> None:
+        """calculate_font_size must return max_pt for empty/short text and floor at min_pt for massive text."""
+        box_w = Length(Inches(3.0))
+        box_h = Length(Inches(0.5))
+
+        assert FontEngine.calculate_font_size("", box_w, box_h, max_pt=16.0, min_pt=9.0).pt == 16.0
+        assert FontEngine.calculate_font_size("Short", box_w, box_h, max_pt=16.0, min_pt=9.0).pt == 16.0
+
+        huge_text = "大規模な基幹システム刷新における段階的移行アプローチとリスク緩和策の検討" * 10
+        assert FontEngine.calculate_font_size(huge_text, box_w, box_h, max_pt=16.0, min_pt=9.0).pt == 9.0
+
+
+# ----------------------------------------------------------------------
+# Independent Physical Layout & Overflow Verification Helpers
+# ----------------------------------------------------------------------
+
+MAX_CAPACITY_PAYLOADS: dict[str, dict[str, Any]] = {
+    "CORE-02": {
+        "items": [
+            {
+                "number": f"0{i}",
+                "title": f"戦略フェーズ {i}: 全社データ基盤の統合とガバナンス強化",
+                "description": "レガシーシステムの段階的廃止とクラウドネイティブ基盤への完全移行",
+                "is_active": i == 1,
+            }
+            for i in range(1, 9)  # Max 8 items
+        ]
+    },
     "CORE-10": {
-        "headers": ["Col A", "Col B"],
-        "rows": [["1", "2"], ["3", "4"]],
+        "headers": [f"評価指標項目 {c}" for c in range(1, 6)],
+        "rows": [[f"データ値 {r}-{c} (検証済)" for c in range(1, 6)] for r in range(1, 16)],  # Max 15 rows
+        "highlight_row_index": 0,
     },
     "CORE-20": {
         "steps": [
-            {"step_number": 1, "title": "Step 1", "description": "Desc 1"},
-            {"step_number": 2, "title": "Step 2", "description": "Desc 2"},
+            {
+                "step_number": i,
+                "title": f"工程 {i}: 基盤構築",
+                "description": f"マイクロサービス第{i}群の自動デプロイと統合監視の確立",
+            }
+            for i in range(1, 7)  # Max 6 steps
         ]
     },
     "CORE-30": {
         "chart_type": "column",
-        "categories": ["Q1", "Q2"],
-        "series": [{"name": "S1", "values": [10.0, 20.0]}],
+        "categories": [f"Q{q}" for q in range(1, 9)],
+        "series": [
+            {"name": f"事業部 {s}", "values": [float(s * 10 + q) for q in range(1, 9)]}
+            for s in range(1, 5)
+        ],
     },
     "CORE-40": {
-        "x_axis_label": "X Axis",
-        "y_axis_label": "Y Axis",
-        "top_left": {"title": "TL", "badge": "P1", "description": "Top Left"},
-        "top_right": {"title": "TR", "badge": "P2", "description": "Top Right"},
-        "bottom_left": {"title": "BL", "badge": "P3", "description": "Bottom Left"},
-        "bottom_right": {"title": "BR", "badge": "P4", "description": "Bottom Right"},
+        "x_axis_label": "業務定着コスト・移行難易度",
+        "y_axis_label": "全社財務インパクト・戦略貢献度",
+        "top_left": {
+            "title": "重点投資領域",
+            "badge": "P1",
+            "description": "中長期的な競争優位性を確立するための次世代AIプラットフォーム投資。",
+        },
+        "top_right": {
+            "title": "最優先推進（コア）",
+            "badge": "P0",
+            "description": "直ちに全社展開し収益拡大を牽引するミッションクリティカル施策。",
+        },
+        "bottom_left": {
+            "title": "段階的縮退・廃止",
+            "badge": "P3",
+            "description": "保守コストが高止まりしている老朽化オンプレミス資産の計画的廃棄。",
+        },
+        "bottom_right": {
+            "title": "クイックウィン",
+            "badge": "P2",
+            "description": "既存業務プロセスの自動化により短期で投資回収が可能な改善施策。",
+        },
     },
     "CORE-50": {
-        "placeholder_label": "Diagram Guide",
-        "caption": "Caption Text",
+        "placeholder_label": "ハイブリッドクラウド冗長化構成および閉域網ネットワークトポロジー図",
+        "caption": "図1: 東西リージョン間でのアクティブ・アクティブ構成と自動フェイルオーバー経路の定義",
     },
     "CORE-60": {
         "metrics": [
-            {"label": "Metric A", "value": "100", "unit": "%", "trend": "+10%", "is_positive": True},
-            {"label": "Metric B", "value": "200", "unit": "h", "trend": "-5%", "is_positive": False},
+            {
+                "label": f"重要業績評価指標 {i}",
+                "value": f"{i * 128.5}",
+                "unit": "億円",
+                "trend": f"前年同期比 +{i * 6.4}% 達成",
+                "is_positive": True,
+            }
+            for i in range(1, 5)  # Max 4 cards
         ]
     },
     "CORE-70": {
         "left_column": {
-            "header": "As-Is",
-            "sub_header": "Legacy",
-            "points": ["Point 1", "Point 2"],
+            "header": "現状課題 (As-Is)",
+            "sub_header": "サイロ化された個別最適システム",
+            "points": [f"部門間でのデータ連携が手動バッチに依存し遅延が発生 (課題{i})" for i in range(1, 7)],
             "is_highlighted": False,
         },
         "right_column": {
-            "header": "To-Be",
-            "sub_header": "Target",
-            "points": ["Point A", "Point B"],
+            "header": "理想姿 (To-Be)",
+            "sub_header": "イベント駆動型リアルタイム統合基盤",
+            "points": [f"ゼロトラストセキュリティ下での全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 7)],
             "is_highlighted": True,
         },
     },
 }
 
-SPLIT_COMBINATIONS = list(
-    itertools.product(SPLIT_TEMPLATES_SAMPLE_PAYLOADS.keys(), SPLIT_TEMPLATES_SAMPLE_PAYLOADS.keys())
-)
+MAX_SPLIT_CAPACITY_PAYLOADS: dict[str, dict[str, Any]] = {
+    **MAX_CAPACITY_PAYLOADS,
+    "CORE-10": {
+        "headers": [f"評価指標 {c}" for c in range(1, 5)],
+        "rows": [[f"データ {r}-{c}" for c in range(1, 5)] for r in range(1, 9)],  # Max 8 rows in split
+        "highlight_row_index": 0,
+    },
+    "CORE-20": {
+        "steps": [
+            {
+                "step_number": i,
+                "title": f"工程 {i}: 基盤構築",
+                "description": f"マイクロサービス第{i}群の自動デプロイ",
+            }
+            for i in range(1, 5)  # Max 4 steps in split
+        ]
+    },
+    "CORE-70": {
+        "left_column": {
+            "header": "現状課題 (As-Is)",
+            "sub_header": "サイロ化された個別最適",
+            "points": [f"部門間データ連携が手動バッチに依存 (課題{i})" for i in range(1, 5)],  # Max 4 pts in split
+            "is_highlighted": False,
+        },
+        "right_column": {
+            "header": "理想姿 (To-Be)",
+            "sub_header": "リアルタイム統合基盤",
+            "points": [f"全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 5)],  # Max 4 pts in split
+            "is_highlighted": True,
+        },
+    },
+}
 
 
-def _assert_shape_bounds(shape: Any, slide_w: int, slide_h: int, tolerance: int, label: str) -> None:
-    """Assert an individual shape does not exceed outer presentation canvas boundaries."""
+def _independent_paragraph_height_pt(paragraph: Any, avail_width_pt: float) -> float:
+    """Independently compute physical height of a paragraph without calling FontEngine."""
+    p_text = paragraph.text.strip()
+    if not p_text:
+        return 0.0
+
+    # Determine effective max font size across paragraph and its runs
+    pt_candidates = [paragraph.font.size.pt] if paragraph.font.size else []
+    for run in paragraph.runs:
+        if run.font and run.font.size:
+            pt_candidates.append(run.font.size.pt)
+    font_pt = max(pt_candidates) if pt_candidates else 12.0
+
+    # Enforce legibility floor: no text may be crushed below 8.0pt
+    assert font_pt >= 8.0, f"Illegible micro-font detected ({font_pt}pt < 8.0pt) in text: '{p_text[:30]}'"
+
+    # Independent physical width model: ASCII = 0.58em, non-ASCII (CJK/symbols) = 1.0em
+    em_width = sum(1.0 if ord(ch) > 127 else 0.58 for ch in p_text)
+    chars_per_line = max(1.0, avail_width_pt / font_pt)
+    lines = max(1, math.ceil(em_width / chars_per_line))
+
+    space_after_pt = paragraph.space_after.pt if paragraph.space_after else 0.0
+    return (lines * font_pt * 1.3) + space_after_pt
+
+
+def _assert_text_frame_fits_physically(
+    tf: Any,
+    box_w_pt: float,
+    box_h_pt: float,
+    label: str,
+) -> int:
+    """Verify text frame content fits physically inside (box_w_pt, box_h_pt)."""
+    if not tf or not tf.text.strip():
+        return 0
+
+    assert box_w_pt >= 24.0, f"{label}: text frame width collapsed ({box_w_pt:.1f}pt < 24pt)"
+    assert box_h_pt >= 12.0, f"{label}: text frame height collapsed ({box_h_pt:.1f}pt < 12pt)"
+
+    total_req_pt = sum(_independent_paragraph_height_pt(p, box_w_pt) for p in tf.paragraphs)
+    # Allow at most 10% for PowerPoint internal baseline clipping tolerance
+    assert total_req_pt <= box_h_pt * 1.10, (
+        f"{label} physical text overflow: required {total_req_pt:.1f}pt > available {box_h_pt:.1f}pt "
+        f"(text={tf.text.strip()[:40]!r})"
+    )
+    return 1
+
+
+def _assert_shape_physical_invariants(shape: Any, slide_w: int, slide_h: int, label: str) -> int:
+    """Verify a shape has positive non-collapsed dimensions, stays in bounds, and has zero text overflow."""
     left = int(shape.left or 0)
     top = int(shape.top or 0)
     width = int(shape.width or 0)
     height = int(shape.height or 0)
-    assert left >= 0, f"Shape in {label} left < 0: {left}"
-    assert top >= 0, f"Shape in {label} top < 0: {top}"
-    assert left + width <= slide_w + tolerance, f"Shape in {label} right exceeds width: {left + width} > {slide_w}"
-    assert top + height <= slide_h + tolerance, f"Shape in {label} bottom exceeds height: {top + height} > {slide_h}"
+    tolerance = int(Inches(0.02))
+
+    # Minimum non-collapsed physical size: width >= 0.35in, height >= 0.20in
+    assert width >= int(Inches(0.35)), f"{label} width collapsed: {width / 914400:.2f}in"
+    assert height >= int(Inches(0.20)), f"{label} height collapsed: {height / 914400:.2f}in"
+    assert left >= 0 and top >= 0, f"{label} negative coordinates: ({left}, {top})"
+    assert left + width <= slide_w + tolerance, f"{label} exceeds slide width"
+    assert top + height <= slide_h + tolerance, f"{label} exceeds slide height"
+
+    checked = 0
+    if shape.has_text_frame:
+        checked += _assert_text_frame_fits_physically(
+            shape.text_frame,
+            width / 12700.0,
+            height / 12700.0,
+            label,
+        )
+
+    if shape.has_table:
+        table = shape.table
+        col_w_pts = [col.width / 12700.0 for col in table.columns]
+        row_h_pts = [row.height / 12700.0 for row in table.rows]
+        for r_idx, row in enumerate(table.rows):
+            for c_idx, cell in enumerate(row.cells):
+                # Deduct 6pt horizontal and 3pt vertical cell margins
+                avail_w_pt = col_w_pts[c_idx] - 6.0
+                avail_h_pt = row_h_pts[r_idx] - 3.0
+                checked += _assert_text_frame_fits_physically(
+                    cell.text_frame,
+                    avail_w_pt,
+                    avail_h_pt,
+                    f"{label} cell({r_idx},{c_idx})",
+                )
+    return checked
 
 
-def _verify_slide_pane_containment(
+def _assert_pane_containment_and_separation(
     slide: Any,
     body_top: int,
     left_box: BoundingBox,
     right_box: BoundingBox,
-    slide_w: int,
-    slide_h: int,
     label: str,
 ) -> None:
-    """Verify all slide shapes are within boundaries and partitioned cleanly into left/right panes."""
-    tolerance = int(Inches(0.05))
-    left_shapes = []
-    right_shapes = []
+    """Independently verify left pane and right pane shapes stay strictly inside their allocated boxes."""
+    tolerance = int(Inches(0.02))
+    left_shapes = [
+        s for s in slide.shapes
+        if int(s.top or 0) >= body_top - tolerance and int(s.left or 0) < int(right_box.left) - tolerance
+    ]
+    right_shapes = [
+        s for s in slide.shapes
+        if int(s.top or 0) >= body_top - tolerance and int(s.left or 0) >= int(right_box.left) - tolerance
+    ]
 
-    for shape in slide.shapes:
-        _assert_shape_bounds(shape, slide_w, slide_h, tolerance, label)
-        top = int(shape.top or 0)
-        left = int(shape.left or 0)
-        if top >= body_top - tolerance:
-            if left < int(right_box.left) - tolerance:
-                left_shapes.append(shape)
-            else:
-                right_shapes.append(shape)
+    assert len(left_shapes) > 0, f"{label}: left pane rendered 0 shapes"
+    assert len(right_shapes) > 0, f"{label}: right pane rendered 0 shapes"
 
-    if left_shapes and right_shapes:
-        max_left_right = max(int(s.left or 0) + int(s.width or 0) for s in left_shapes)
-        min_right_left = min(int(s.left or 0) for s in right_shapes)
-        assert max_left_right <= int(left_box.right) + tolerance, (
-            f"Left pane shape in {label} crosses into gap/right: {max_left_right} exceeds left pane right {int(left_box.right)}"
-        )
-        assert min_right_left >= int(right_box.left) - tolerance, (
-            f"Right pane shape in {label} crosses into gap/left: {min_right_left} precedes right pane left {int(right_box.left)}"
-        )
-        assert max_left_right <= min_right_left + tolerance, (
-            f"Pane overlap in {label}: left pane edge {max_left_right} exceeds right pane edge {min_right_left}"
-        )
+    for s in left_shapes:
+        s_left, s_right = int(s.left or 0), int(s.left or 0) + int(s.width or 0)
+        assert s_left >= int(left_box.left) - tolerance, f"{label}: left shape leaks left"
+        assert s_right <= int(left_box.right) + tolerance, f"{label}: left shape leaks into gap/right pane"
+
+    for s in right_shapes:
+        s_left, s_right = int(s.left or 0), int(s.left or 0) + int(s.width or 0)
+        assert s_left >= int(right_box.left) - tolerance, f"{label}: right shape leaks into gap/left pane"
+        assert s_right <= int(right_box.right) + tolerance, f"{label}: right shape leaks right"
 
 
-class TestSplitCombinations:
-    """Verifies all pairwise split-layout combinations across all eligible templates."""
+class TestAdaptiveLayoutAndPhysicalInvariants:
+    """Verifies physical layout integrity, card non-collapse, and independent text fit under stress."""
 
-    @pytest.mark.parametrize("left_id,right_id", SPLIT_COMBINATIONS)
-    def test_pairwise_split_rendering(self, left_id: str, right_id: str) -> None:
-        """Any valid pair of split-supporting templates must render with zero fallbacks."""
-        left_payload = SPLIT_TEMPLATES_SAMPLE_PAYLOADS[left_id]
-        right_payload = SPLIT_TEMPLATES_SAMPLE_PAYLOADS[right_id]
-
-        slide_def = SlideDefinition.model_validate({
-            "template_id": left_id,
-            "title": f"Split: {left_id} + {right_id}",
-            "lead_text": "Evaluating split combination layout integrity.",
-            "payload": left_payload,
-            "right_template_id": right_id,
-            "right_payload": right_payload,
-            "split_ratio": 0.5,
-        })
-
-        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
-        prs, summary = generate_presentation(deck)
-
-        assert summary["total_slides"] == 1
-        assert summary["rendered_slides"] == 1
-        assert summary["fallback_slides"] == 0
-        assert len(prs.slides) == 1
-
-        slide = prs.slides[0]
-        if slide.has_notes_slide:
-            assert "Slide Rendering Error" not in slide.notes_slide.notes_text_frame.text
-
-        assert prs.slide_width is not None and prs.slide_height is not None
-        _, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
-        left_box, right_box = SlideMaster.split_horizontal(body_box, split_ratio=0.5)
-
-        _verify_slide_pane_containment(
-            slide=slide,
-            body_top=int(body_box.top),
-            left_box=left_box,
-            right_box=right_box,
-            slide_w=int(prs.slide_width),
-            slide_h=int(prs.slide_height),
-            label=f"{left_id}+{right_id}",
-        )
-
-    @pytest.mark.parametrize("split_ratio", [0.2, 0.35, 0.5, 0.65, 0.8])
-    def test_split_ratios_and_pane_separation(self, split_ratio: float) -> None:
-        """Verify dynamic layout recalculation across various horizontal split ratios."""
-        slide_def = SlideDefinition.model_validate({
-            "template_id": "CORE-10",
-            "title": f"Split Ratio {split_ratio}",
-            "lead_text": "Testing variable split ratios with pane bounds.",
-            "payload": SPLIT_TEMPLATES_SAMPLE_PAYLOADS["CORE-10"],
-            "right_template_id": "CORE-60",
-            "right_payload": SPLIT_TEMPLATES_SAMPLE_PAYLOADS["CORE-60"],
-            "split_ratio": split_ratio,
-        })
-
-        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
-        prs, summary = generate_presentation(deck)
-        assert summary["fallback_slides"] == 0
-
-        slide = prs.slides[0]
-        assert prs.slide_width is not None and prs.slide_height is not None
-        _, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
-        left_box, right_box = SlideMaster.split_horizontal(body_box, split_ratio=split_ratio)
-
-        _verify_slide_pane_containment(
-            slide=slide,
-            body_top=int(body_box.top),
-            left_box=left_box,
-            right_box=right_box,
-            slide_w=int(prs.slide_width),
-            slide_h=int(prs.slide_height),
-            label=f"split_ratio_{split_ratio}",
-        )
-
-    @pytest.mark.parametrize(
-        "left_t,right_t",
-        [
-            ("CORE-10", "CORE-70"),
-            ("CORE-20", "CORE-60"),
-            ("CORE-40", "CORE-10"),
-            ("CORE-60", "CORE-70"),
-        ],
-    )
-    def test_split_boundary_maximum_capacity(self, left_t: str, right_t: str) -> None:
-        """Verify rendering resilience at maximum payload capacities across diverse template pairs."""
-        boundary_payloads: dict[str, dict[str, Any]] = {
-            "CORE-10": {
-                "headers": [f"Header {i}" for i in range(1, 6)],
-                "rows": [[f"Cell {r}-{c}" for c in range(1, 6)] for r in range(1, 16)],
-            },
-            "CORE-20": {
-                "steps": [
-                    {
-                        "step_number": i,
-                        "title": f"Process Step {i}",
-                        "description": f"Detailed execution task for step {i} in automated pipeline.",
-                    }
-                    for i in range(1, 7)
-                ]
-            },
-            "CORE-40": {
-                "x_axis_label": "Operational Efficiency",
-                "y_axis_label": "Strategic Alignment",
-                "top_left": {
-                    "title": "Strategic Invest",
-                    "badge": "P1",
-                    "description": "Long-term foundational investments with high architectural payoff.",
-                },
-                "top_right": {
-                    "title": "Core Strengths",
-                    "badge": "P0",
-                    "description": "Mission-critical revenue generating operations requiring continuous scale.",
-                },
-                "bottom_left": {
-                    "title": "Sunsetting",
-                    "badge": "P3",
-                    "description": "Legacy components slated for graceful decommissioning.",
-                },
-                "bottom_right": {
-                    "title": "Quick Wins",
-                    "badge": "P2",
-                    "description": "Immediate automation tactical steps yielding quick efficiency.",
-                },
-            },
-            "CORE-60": {
-                "metrics": [
-                    {
-                        "label": f"Metric {i}",
-                        "value": f"{i * 125}k",
-                        "unit": "JPY",
-                        "trend": f"+{i * 4}%",
-                        "is_positive": True,
-                    }
-                    for i in range(1, 5)
-                ]
-            },
-            "CORE-70": {
-                "left_column": {
-                    "header": "Current State Analysis",
-                    "sub_header": "High Friction Legacy",
-                    "points": [f"Current bottleneck point {i} in operation" for i in range(1, 6)],
-                    "is_highlighted": False,
-                },
-                "right_column": {
-                    "header": "Future State Vision",
-                    "sub_header": "Optimized AI Pipeline",
-                    "points": [f"Future strategic transformation initiative {i}" for i in range(1, 6)],
-                    "is_highlighted": True,
-                },
-            },
-        }
-
-        slide_def = SlideDefinition.model_validate({
-            "template_id": left_t,
-            "title": f"Max Capacity Split: {left_t} + {right_t}",
-            "lead_text": "Boundary stress testing of high density content panes.",
-            "payload": boundary_payloads[left_t],
-            "right_template_id": right_t,
-            "right_payload": boundary_payloads[right_t],
-            "split_ratio": 0.5,
-        })
-
-        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
-        prs, summary = generate_presentation(deck)
-        assert summary["fallback_slides"] == 0
-
-        slide = prs.slides[0]
-        assert prs.slide_width is not None and prs.slide_height is not None
-        slide_w, slide_h = int(prs.slide_width), int(prs.slide_height)
-
-        for s in slide.shapes:
-            left = int(s.left or 0)
-            top = int(s.top or 0)
-            width = int(s.width or 0)
-            height = int(s.height or 0)
-            assert left >= 0
-            assert top >= 0
-            assert left + width <= slide_w + int(Inches(0.05))
-            assert top + height <= slide_h + int(Inches(0.05))
-
-
-def _estimate_text_frame_required_height(tf: Any, box_w: float) -> float:
-    """Estimate total required height in inches for text inside a text frame using CJK font engine logic."""
-    total_height = 0.0
-    for paragraph in tf.paragraphs:
-        p_text = paragraph.text.strip()
-        if not p_text:
-            continue
-        pt_size = paragraph.font.size.pt if paragraph.font.size else 12.0
-        req_pt = FontEngine.estimate_height_pt(p_text, box_w * 72.0, pt_size)
-        total_height += req_pt / 72.0
-    return total_height
-
-
-def _check_shape_text_overflow(shape: Any, slide_idx: int, shape_idx: int, tolerance_ratio: float) -> int:
-    """Check text frame or table cells for vertical overflow. Returns number of checked frames."""
-    checked = 0
-    if shape.has_text_frame and shape.text_frame.text.strip():
-        box_w = float(shape.width) / 914400.0
-        box_h = float(shape.height) / 914400.0
-        req_h = _estimate_text_frame_required_height(shape.text_frame, box_w)
-        assert req_h <= box_h * tolerance_ratio, (
-            f"Slide {slide_idx} Shape {shape_idx} text overflow: "
-            f"required height {req_h:.2f}in exceeds box height {box_h:.2f}in"
-        )
-        checked += 1
-
-    if shape.has_table:
-        table = shape.table
-        col_widths = [float(col.width) / 914400.0 for col in table.columns]
-        row_heights = [float(row.height) / 914400.0 for row in table.rows]
-        for r_idx, row in enumerate(table.rows):
-            for c_idx, cell in enumerate(row.cells):
-                if cell.text_frame and cell.text_frame.text.strip():
-                    c_w = col_widths[c_idx]
-                    r_h = row_heights[r_idx]
-                    req_h = _estimate_text_frame_required_height(cell.text_frame, c_w)
-                    assert req_h <= r_h * tolerance_ratio, (
-                        f"Slide {slide_idx} Table cell ({r_idx},{c_idx}) overflow: "
-                        f"required height {req_h:.2f}in exceeds cell height {r_h:.2f}in"
-                    )
-                    checked += 1
-    return checked
-
-
-class TestTextOverflowEstimation:
-    """Verifies that generated text content does not visually overflow allocated shape boundaries."""
-
-    def test_text_does_not_overflow_allocated_boxes(self) -> None:
-        """Inspect all rendered text frames across sample slides to ensure text fits within bounding boxes."""
+    def test_sample_deck_physical_text_fit_including_tables(self) -> None:
+        """All 10 slides of sample_deck.json (including all table cells) must pass physical fit checks."""
         sample_path = Path(__file__).parent.parent / "examples" / "sample_deck.json"
         deck = PresentationDeck.model_validate_json(sample_path.read_text(encoding="utf-8"))
         prs, summary = generate_presentation(deck)
         assert summary["fallback_slides"] == 0
+        assert prs.slide_width is not None and prs.slide_height is not None
 
-        overflow_tolerance_ratio = 1.15  # Strict 15% padding allowance
-
-        checked_text_frames = 0
-        for slide_idx, slide in enumerate(prs.slides):
-            for shape_idx, shape in enumerate(slide.shapes):
-                checked_text_frames += _check_shape_text_overflow(
-                    shape, slide_idx, shape_idx, overflow_tolerance_ratio
+        total_checked = 0
+        for s_idx, slide in enumerate(prs.slides):
+            for sh_idx, shape in enumerate(slide.shapes):
+                total_checked += _assert_shape_physical_invariants(
+                    shape,
+                    int(prs.slide_width),
+                    int(prs.slide_height),
+                    f"SampleSlide[{s_idx}].Shape[{sh_idx}]",
                 )
+        # Sample deck has 10 slides with headers, cards, and 2 tables (20+12=32 table cells) -> 65+ frames
+        assert total_checked >= 65
 
-        assert checked_text_frames > 40, f"Expected >40 text frames checked (including tables), got {checked_text_frames}"
+    @pytest.mark.parametrize(
+        "template_id",
+        ["CORE-02", "CORE-10", "CORE-20", "CORE-30", "CORE-40", "CORE-50", "CORE-60", "CORE-70"],
+    )
+    def test_single_pane_max_capacity_stress(self, template_id: str) -> None:
+        """Every template at maximum schema capacity must fit physically without overflow or collapse."""
+        slide_def = SlideDefinition.model_validate({
+            "template_id": template_id,
+            "title": f"最大容量ストレステスト: {template_id}",
+            "subtitle": "MAX CAPACITY VERIFICATION",
+            "lead_text": "スキーマ上限の要素数および日本語長文テキストを投入した際の物理レイアウト収まり検証。",
+            "payload": MAX_CAPACITY_PAYLOADS[template_id],
+        })
+        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
+        prs, summary = generate_presentation(deck)
+        assert summary["fallback_slides"] == 0
+        assert prs.slide_width is not None and prs.slide_height is not None
 
+        slide = prs.slides[0]
+        for sh_idx, shape in enumerate(slide.shapes):
+            _assert_shape_physical_invariants(
+                shape,
+                int(prs.slide_width),
+                int(prs.slide_height),
+                f"MaxSingle[{template_id}].Shape[{sh_idx}]",
+            )
+
+    @pytest.mark.parametrize(
+        "left_id,right_id,split_ratio",
+        [
+            ("CORE-20", "CORE-60", 0.3),   # Compact process in 30% + 4 KPIs in 70%
+            ("CORE-60", "CORE-20", 0.7),   # 4 KPIs in 70% + Compact process in 30%
+            ("CORE-70", "CORE-10", 0.35),  # Vertical stacked comparison in 35% + 8-row table in 65%
+            ("CORE-10", "CORE-40", 0.5),   # 8x4 Table + 2x2 Matrix at 50/50 split
+            ("CORE-40", "CORE-70", 0.45),  # 2x2 Matrix in 45% + Comparison in 55%
+            ("CORE-30", "CORE-50", 0.5),   # Native Chart + Visual Guide Frame
+        ],
+    )
+    def test_extreme_split_max_capacity_invariants(
+        self,
+        left_id: str,
+        right_id: str,
+        split_ratio: float,
+    ) -> None:
+        """Max-capacity payloads in extreme split ratios must adapt layout and pass all physical checks."""
+        slide_def = SlideDefinition.model_validate({
+            "template_id": left_id,
+            "title": f"極限スプリット検証: {left_id} + {right_id} ({split_ratio})",
+            "lead_text": "狭小ペインにおけるグリッド・スタック自動切替およびフォント縮小の物理境界検証。",
+            "payload": MAX_SPLIT_CAPACITY_PAYLOADS[left_id],
+            "right_template_id": right_id,
+            "right_payload": MAX_SPLIT_CAPACITY_PAYLOADS[right_id],
+            "split_ratio": split_ratio,
+        })
+        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
+        prs, summary = generate_presentation(deck)
+        assert summary["fallback_slides"] == 0
+        assert prs.slide_width is not None and prs.slide_height is not None
+
+        slide = prs.slides[0]
+        _, body_box = SlideMaster.get_body_box_with_lead(has_lead_text=True)
+        left_box, right_box = SlideMaster.split_horizontal(body_box, split_ratio=split_ratio)
+
+        _assert_pane_containment_and_separation(
+            slide,
+            int(body_box.top),
+            left_box,
+            right_box,
+            f"Split[{left_id}+{right_id}@{split_ratio}]",
+        )
+
+        for sh_idx, shape in enumerate(slide.shapes):
+            _assert_shape_physical_invariants(
+                shape,
+                int(prs.slide_width),
+                int(prs.slide_height),
+                f"Split[{left_id}+{right_id}@{split_ratio}].Shape[{sh_idx}]",
+            )
