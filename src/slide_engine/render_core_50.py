@@ -7,16 +7,45 @@ external image I/O and external image parsing dependencies.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
-from slide_engine.models import Core50Payload
+from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
+
+
+class Core50Payload(BasePayload):
+    """Payload for Visual Guide Frame slide (CORE-50).
+
+    Used for rendering a manual screenshot/diagram guide frame and caption.
+    Completely eliminates external file I/O and Pillow dependency.
+    """
+
+    placeholder_label: ShortText
+    caption: SafeText | None = None
+
+
+_SAMPLE_CORE50: dict[str, Any] = {
+    "placeholder_label": "ハイブリッドクラウド冗長化構成および閉域網ネットワークトポロジー図",
+    "caption": "図1: 東西リージョン間でのアクティブ・アクティブ構成と自動フェイルオーバー経路の定義",
+}
+
+_INVALID_SAMPLES_CORE50: list[dict[str, Any]] = [
+    {"placeholder_label": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN (120)
+]
+
+SPEC = TemplateSpec(
+    payload_type=Core50Payload,
+    supports_split=True,
+    description="Visual Guide Frame",
+    sample_payload=_SAMPLE_CORE50,
+    invalid_sample_payloads=_INVALID_SAMPLES_CORE50,
+)
 
 
 CAPTION_HEIGHT = Inches(0.500)
@@ -52,22 +81,16 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
     )
 
     # 2. Centered Helper Text
-    tb_center = ShapeBuilder.add_textbox(slide, frame_box)
-    tf_center = tb_center.text_frame
-    p_center = tf_center.paragraphs[0]
-    center_text = f"[ 画像・図解配置エリア: {payload.placeholder_label} ]"
-    p_center.text = center_text
-    p_center.alignment = PP_ALIGN.CENTER
-    p_center.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_center.font.size = FontEngine.calculate_font_size(
-        center_text,
-        frame_box.width,
-        frame_box.height,
+    ShapeBuilder.add_styled_textbox(
+        slide,
+        frame_box,
+        f"[ 画像・図解配置エリア: {payload.placeholder_label} ]",
         max_pt=13.0,
         min_pt=9.0,
+        color_key="text_muted",
+        bold=True,
+        alignment=PP_ALIGN.CENTER,
     )
-    p_center.font.bold = True
-    p_center.font.color.rgb = SlideMaster.COLORS["text_muted"]
 
     # 3. Optional Bottom Caption
     if has_caption and payload.caption:
@@ -77,17 +100,12 @@ def render_core_50(slide: Slide, payload: Core50Payload, box: BoundingBox) -> No
             width=box.width,
             height=CAPTION_HEIGHT,
         )
-        tb_caption = ShapeBuilder.add_textbox(slide, caption_box)
-        p_cap = tb_caption.text_frame.paragraphs[0]
-        cap_text = f"※ {payload.caption}"
-        p_cap.text = cap_text
-        p_cap.alignment = PP_ALIGN.LEFT
-        p_cap.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_cap.font.size = FontEngine.calculate_font_size(
-            cap_text,
-            caption_box.width,
-            caption_box.height,
+        ShapeBuilder.add_styled_textbox(
+            slide,
+            caption_box,
+            f"※ {payload.caption}",
             max_pt=9.5,
             min_pt=8.0,
+            color_key="text_muted",
+            alignment=PP_ALIGN.LEFT,
         )
-        p_cap.font.color.rgb = SlideMaster.COLORS["text_muted"]

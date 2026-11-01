@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import sys
 from typing import TYPE_CHECKING
 
@@ -80,6 +81,10 @@ def main() -> None:
     except Exception as exc:
         sys.stderr.write(f"Fatal Engine Failure: {exc}\n")
         sys.exit(2)
+
+    # Emit telemetry to STDERR conforming to Observability rules
+    sys.stderr.write(json.dumps(summary) + "\n")
+    sys.stderr.flush()
 
     # Validate strict generation constraint
     if args.fail_on_fallback and summary.get("fallback_slides", 0) > 0:

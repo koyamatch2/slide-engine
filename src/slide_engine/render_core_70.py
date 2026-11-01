@@ -7,15 +7,88 @@ switches to vertical top/bottom stacking inside narrow split panes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pptx.util import Inches, Length
+from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
-from slide_engine.models import ComparisonColumn, Core70Payload
+from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
+
+
+class ComparisonColumn(BasePayload):
+    """Column definition for Comparison slide."""
+
+    header: ShortText
+    sub_header: ShortText | None = None
+    points: list[SafeText] = Field(min_length=1, max_length=6)
+    is_highlighted: bool = False
+
+
+class Core70Payload(BasePayload):
+    """Payload for Comparison / Before-After slide (CORE-70)."""
+
+    left_column: ComparisonColumn
+    right_column: ComparisonColumn
+
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Enforce point count limits for split layout."""
+        max_pts = max(len(self.left_column.points), len(self.right_column.points))
+        if max_pts > 4:
+            raise ValueError(
+                f"{pane_name} comparison '{template_id}' in split layout exceeds legibility limit: "
+                f"{max_pts} points > 4 points maximum."
+            )
+
+
+_SAMPLE_CORE70: dict[str, Any] = {
+    "left_column": {
+        "header": "現状課題 (As-Is)",
+        "sub_header": "サイロ化された個別最適システム",
+        "points": [f"部門間でのデータ連携が手動バッチに依存し遅延が発生 (課題{i})" for i in range(1, 7)],
+        "is_highlighted": False,
+    },
+    "right_column": {
+        "header": "理想姿 (To-Be)",
+        "sub_header": "イベント駆動型リアルタイム統合基盤",
+        "points": [f"ゼロトラストセキュリティ下での全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 7)],
+        "is_highlighted": True,
+    },
+}
+
+_SAMPLE_CORE70_SPLIT: dict[str, Any] = {
+    "left_column": {
+        "header": "現状課題 (As-Is)",
+        "sub_header": "サイロ化された個別最適",
+        "points": [f"部門間データ連携が手動バッチに依存 (課題{i})" for i in range(1, 5)],
+        "is_highlighted": False,
+    },
+    "right_column": {
+        "header": "理想姿 (To-Be)",
+        "sub_header": "リアルタイム統合基盤",
+        "points": [f"全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 5)],
+        "is_highlighted": True,
+    },
+}
+
+_INVALID_SAMPLES_CORE70: list[dict[str, Any]] = [
+    {
+        "left_column": {"header": "H", "points": []},  # Violates min_length=1
+        "right_column": {"header": "H", "points": ["P"]},
+    }
+]
+
+SPEC = TemplateSpec(
+    payload_type=Core70Payload,
+    supports_split=True,
+    description="Comparison Box",
+    sample_payload=_SAMPLE_CORE70,
+    split_sample_payload=_SAMPLE_CORE70_SPLIT,
+    invalid_sample_payloads=_INVALID_SAMPLES_CORE70,
+)
 
 
 COL_GAP = Inches(0.250)
@@ -46,72 +119,58 @@ def _render_comparison_column(
         border_width_pt=border_width,
     )
 
-    pad_x = Length(min(int(COL_INNER_PAD), int(box.width * 0.08)))
-    pad_y = Length(min(int(COL_INNER_PAD), int(box.height * 0.08)))
-
-    inner_box = BoundingBox(
-        left=Length(box.left + pad_x),
-        top=Length(box.top + pad_y),
-        width=Length(max(int(Inches(0.400)), int(box.width - (pad_x * 2)))),
-        height=Length(max(int(Inches(0.300)), int(box.height - (pad_y * 2)))),
-    )
+    inner_box = box.inset(COL_INNER_PAD, COL_INNER_PAD, max_ratio_x=0.08, max_ratio_y=0.08)
     tb = ShapeBuilder.add_textbox(slide, inner_box)
     tf = tb.text_frame
 
-    header_budget_h = Length(int(inner_box.height * 0.18))
-    sub_budget_h = Length(int(inner_box.height * 0.12))
-    points_Count = max(1, len(column.points))
-    point_budget_h = Length(int((inner_box.height * 0.65) / points_Count))
+    has_sub = bool(column.sub_header)
+    header_budget_h = inner_box.scale_height(0.15 if has_sub else 0.20)
+    sub_budget_h = inner_box.scale_height(0.12)
+    points_budget_ratio = 0.60 if has_sub else 0.70
+    points_count = max(1, len(column.points))
+    point_budget_h = Length(int(inner_box.scale_height(points_budget_ratio) / points_count))
     space_gap_pt = min(6.0, max(1.5, inner_box.height.pt * 0.02))
 
     # Header Title
-    p_header = tf.paragraphs[0]
-    p_header.text = column.header
-    p_header.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_header.font.size = FontEngine.calculate_font_size(
+    header_col_key = "accent" if column.is_highlighted else "primary"
+    ShapeBuilder.add_styled_paragraph(
+        tf,
         column.header,
         inner_box.width,
         header_budget_h,
         max_pt=15.0,
         min_pt=9.0,
-    )
-    p_header.font.bold = True
-    p_header.font.color.rgb = (
-        SlideMaster.COLORS["accent"] if column.is_highlighted else SlideMaster.COLORS["primary"]
+        color_key=header_col_key,
+        bold=True,
+        space_after_pt=None if column.sub_header else (space_gap_pt * 1.2),
+        is_first=True,
     )
 
     # Sub-header
     if column.sub_header:
-        p_sub = tf.add_paragraph()
-        p_sub.text = column.sub_header
-        p_sub.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_sub.font.size = FontEngine.calculate_font_size(
+        ShapeBuilder.add_styled_paragraph(
+            tf,
             column.sub_header,
             inner_box.width,
             sub_budget_h,
             max_pt=10.5,
             min_pt=8.0,
+            color_key="text_muted",
+            space_after_pt=space_gap_pt * 1.2,
         )
-        p_sub.font.color.rgb = SlideMaster.COLORS["text_muted"]
-        p_sub.space_after = FontEngine.pt(space_gap_pt * 1.2)
-    else:
-        p_header.space_after = FontEngine.pt(space_gap_pt * 1.2)
 
     # Point Bullet List
     for point in column.points:
-        bullet_text = f"•  {point}"
-        p_pt = tf.add_paragraph()
-        p_pt.text = bullet_text
-        p_pt.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_pt.font.size = FontEngine.calculate_font_size(
-            bullet_text,
+        ShapeBuilder.add_styled_paragraph(
+            tf,
+            f"•  {point}",
             inner_box.width,
             point_budget_h,
             max_pt=11.0,
             min_pt=8.0,
+            color_key="text_dark",
+            space_after_pt=space_gap_pt * 0.6,
         )
-        p_pt.font.color.rgb = SlideMaster.COLORS["text_dark"]
-        p_pt.space_after = FontEngine.pt(space_gap_pt * 0.6)
 
 
 def render_core_70(slide: Slide, payload: Core70Payload, box: BoundingBox) -> None:

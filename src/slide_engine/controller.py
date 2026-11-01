@@ -1,58 +1,51 @@
 """Integration and orchestration layer.
 
 Manages dynamic template dispatching, per-slide transactional rendering,
-fail-soft fallback handling, and structured telemetry emission to STDERR.
+and fail-soft fallback handling.
 """
 
 from __future__ import annotations
 
-import glob
-import importlib
-import json
 import os
-import sys
 import time
 import traceback
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pptx import Presentation
+from pptx.slide import Slide
 
 from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster, render_standard_header
-from slide_engine.models import Core00Payload, PresentationDeck, SlideDefinition
+from slide_engine.models import (
+    TEMPLATE_REGISTRY,
+    PresentationDeck,
+    SlideDefinition,
+    get_loaded_template_modules,
+)
 
 if TYPE_CHECKING:
     from pptx.presentation import Presentation as PresentationType
-    from pptx.slide import Slide
 
-RenderFunction = Callable[[Any, Any, BoundingBox], None]
+RenderFunction = Callable[[Slide, Any, BoundingBox], None]
 
 
 def build_dynamic_dispatch_table() -> dict[str, RenderFunction]:
-    """Dynamically discover and bind all render_core_XX modules.
-
-    Scans the local directory for 'render_core_*.py' files and imports their
-    render function conforming to the naming convention 'render_core_XX'.
+    """Dynamically bind render functions from discovered template modules.
 
     Returns:
         Mapping of template_id to rendering callable.
     """
     dispatch_table: dict[str, RenderFunction] = {}
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    pattern = os.path.join(current_dir, "render_core_*.py")
+    modules = get_loaded_template_modules()
 
-    for file_path in glob.glob(pattern):
-        module_name = os.path.splitext(os.path.basename(file_path))[0]
-        suffix = module_name.replace("render_core_", "")
-        template_id = f"CORE-{suffix.upper()}"
+    for template_id, mod in modules.items():
+        suffix = template_id.replace("CORE-", "").lower()
+        render_fn = getattr(mod, f"render_core_{suffix}", None)
+        if not callable(render_fn):
+            raise ValueError(f"Module '{mod.__name__}' must export callable 'render_core_{suffix}'.")
 
-        try:
-            mod = importlib.import_module(f"slide_engine.{module_name}")
-            render_fn = getattr(mod, f"render_core_{suffix.lower()}", None)
-            if callable(render_fn):
-                dispatch_table[template_id] = render_fn
-        except Exception as exc:
-            sys.stderr.write(f"Warning: Failed to load renderer module '{module_name}': {exc}\n")
+        dispatch_table[template_id] = render_fn
 
     return dispatch_table
 
@@ -66,18 +59,19 @@ def _initialize_presentation(theme_name: str) -> PresentationType:
     Returns:
         Initialized Presentation object.
     """
-    asset_path = os.path.join("/app/assets", f"{theme_name}.pptx")
-    if not os.path.exists(asset_path):
-        asset_path = os.path.join("assets", f"{theme_name}.pptx")
+    candidates: list[str] = []
+    if "SLIDE_ENGINE_ASSETS_DIR" in os.environ:
+        candidates.append(os.path.join(os.environ["SLIDE_ENGINE_ASSETS_DIR"], f"{theme_name}.pptx"))
+    candidates.append(os.path.join("/app/assets", f"{theme_name}.pptx"))
+    candidates.append(os.path.join("assets", f"{theme_name}.pptx"))
+    pkg_assets = Path(__file__).resolve().parent.parent.parent / "assets" / f"{theme_name}.pptx"
+    candidates.append(str(pkg_assets))
 
-    if os.path.exists(asset_path):
-        prs = Presentation(asset_path)
-        # Purge any pre-existing dummy slides from the master file
-        for i in range(len(prs.slides) - 1, -1, -1):
-            r_id = prs.slides._sldIdLst[i].rId  # noqa: SLF001
-            prs.part.drop_rel(r_id)
-            del prs.slides._sldIdLst[i]  # noqa: SLF001
-        return prs
+    for path in candidates:
+        if os.path.exists(path):
+            prs = Presentation(path)
+            ShapeBuilder.purge_existing_slides(prs)
+            return prs
 
     prs = Presentation()
     prs.slide_width = SlideMaster.SLIDE_WIDTH
@@ -91,8 +85,9 @@ def _execute_slide_render(
     dispatch_table: dict[str, RenderFunction],
 ) -> None:
     """Execute standard layout resolution and rendering with early returns."""
-    # 1. Header & Lead Text Render (Excluded on cover slide)
-    if slide_def.template_id != "CORE-01":
+    # 1. Header & Lead Text Render (Driven by TemplateSpec metadata)
+    spec = TEMPLATE_REGISTRY.get(slide_def.template_id)
+    if spec is None or spec.renders_header:
         render_standard_header(
             slide=slide,
             title=slide_def.title,
@@ -125,6 +120,45 @@ def _execute_slide_render(
     right_fn(slide, slide_def.right_payload, right_box)
 
 
+def _handle_slide_fallback(
+    slide: Slide,
+    slide_def: SlideDefinition,
+    exc: Exception,
+    dispatch_table: dict[str, RenderFunction],
+) -> None:
+    """Record exception in speaker notes and render system fallback slide."""
+    # 1. Record trace in speaker notes for troubleshooting
+    try:
+        notes_slide = slide.notes_slide
+        notes_tf = notes_slide.notes_text_frame
+        if notes_tf is not None:
+            notes_tf.text = f"Slide Rendering Error:\n{traceback.format_exc()}"
+    except Exception:
+        pass
+
+    # 2. Reset canvas
+    ShapeBuilder.clean_slide_canvas(slide)
+
+    # 3. Resolve fallback template and render
+    fallback_tid, fallback_spec = next(
+        ((tid, spec) for tid, spec in TEMPLATE_REGISTRY.items() if spec.is_fallback),
+        (None, None),
+    )
+    if not (fallback_tid and fallback_spec):
+        return
+
+    fallback_fn = dispatch_table.get(fallback_tid)
+    if not fallback_fn:
+        return
+
+    fallback_payload = fallback_spec.create_fallback_payload(
+        error_title=f"Error in {slide_def.template_id}",
+        error_message=str(exc),
+        raw_dump=str(slide_def.model_dump_json()),
+    )
+    fallback_fn(slide, fallback_payload, SlideMaster.CONTENT_BOX)
+
+
 def _render_slide_with_failsoft(
     prs: PresentationType,
     slide_def: SlideDefinition,
@@ -135,7 +169,8 @@ def _render_slide_with_failsoft(
     Returns:
         True if rendered normally, False if fallback was triggered.
     """
-    slide_type = "cover" if slide_def.template_id == "CORE-01" else "body"
+    spec = TEMPLATE_REGISTRY.get(slide_def.template_id)
+    slide_type = spec.layout_type if spec else "body"
     layout = SlideMaster.resolve_slide_layout(prs, slide_type)
     slide = prs.slides.add_slide(layout)
 
@@ -146,25 +181,7 @@ def _render_slide_with_failsoft(
         _execute_slide_render(slide, slide_def, dispatch_table)
         return True
     except Exception as exc:
-        # Record trace in speaker notes for troubleshooting
-        tb_str = traceback.format_exc()
-        try:
-            notes_slide = slide.notes_slide
-            notes_tf = notes_slide.notes_text_frame
-            notes_tf.text = f"Slide Rendering Error:\n{tb_str}"
-        except Exception:
-            pass
-
-        # Clean canvas and render fallback CORE-00 slide
-        ShapeBuilder.clean_slide_canvas(slide)
-        fallback_fn = dispatch_table.get("CORE-00")
-        if fallback_fn:
-            fallback_payload = Core00Payload(
-                error_title=f"Error in {slide_def.template_id}",
-                error_message=str(exc),
-                raw_payload_dump=str(slide_def.model_dump_json()),
-            )
-            fallback_fn(slide, fallback_payload, SlideMaster.CONTENT_BOX)
+        _handle_slide_fallback(slide, slide_def, exc, dispatch_table)
         return False
 
 
@@ -203,9 +220,5 @@ def generate_presentation(
         "fallback_slides": fallback_count,
         "duration_ms": round(elapsed_ms, 2),
     }
-
-    # Emit telemetry to STDERR conforming to Observability rules
-    sys.stderr.write(json.dumps(summary) + "\n")
-    sys.stderr.flush()
 
     return prs, summary

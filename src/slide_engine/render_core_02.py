@@ -6,16 +6,59 @@ and active section highlighting.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
+from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
-from slide_engine.models import AgendaItem, Core02Payload
+from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
+
+
+class AgendaItem(BasePayload):
+    """Item for Agenda slide."""
+
+    number: ShortText
+    title: ShortText
+    description: SafeText | None = None
+    is_active: bool = False
+
+
+class Core02Payload(BasePayload):
+    """Payload for Agenda / Section slide (CORE-02)."""
+
+    items: list[AgendaItem] = Field(min_length=1, max_length=8)
+
+
+_SAMPLE_CORE02: dict[str, Any] = {
+    "items": [
+        {
+            "number": f"0{i}",
+            "title": f"戦略フェーズ {i}: 全社データ基盤の統合とガバナンス強化",
+            "description": "レガシーシステムの段階的廃止とクラウドネイティブ基盤への完全移行",
+            "is_active": i == 1,
+        }
+        for i in range(1, 9)
+    ]
+}
+
+_INVALID_SAMPLES_CORE02: list[dict[str, Any]] = [
+    {"items": []},  # Violates min_length=1
+]
+
+SPEC = TemplateSpec(
+    payload_type=Core02Payload,
+    supports_split=False,
+    description="Agenda / Section",
+    sample_payload=_SAMPLE_CORE02,
+    invalid_sample_payloads=_INVALID_SAMPLES_CORE02,
+    renders_header=True,
+    layout_type="agenda",
+)
 
 
 # Agenda Geometry Constants
@@ -46,22 +89,16 @@ def _render_agenda_row(
         width=badge_w,
         height=badge_h,
     )
-    tb_badge = ShapeBuilder.add_textbox(slide, badge_box)
-    p_badge = tb_badge.text_frame.paragraphs[0]
-    badge_str = str(item.number)
-    p_badge.text = badge_str
-    p_badge.alignment = PP_ALIGN.CENTER
-    p_badge.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_badge.font.size = FontEngine.calculate_font_size(
-        badge_str,
-        badge_box.width,
-        badge_box.height,
+    badge_col_key = "accent" if item.is_active else "secondary"
+    ShapeBuilder.add_styled_textbox(
+        slide,
+        badge_box,
+        str(item.number),
         max_pt=18.0,
         min_pt=10.0,
-    )
-    p_badge.font.bold = True
-    p_badge.font.color.rgb = (
-        SlideMaster.COLORS["accent"] if item.is_active else SlideMaster.COLORS["secondary"]
+        color_key=badge_col_key,
+        bold=True,
+        alignment=PP_ALIGN.CENTER,
     )
 
     # 2. Title & Description Box
@@ -77,36 +114,31 @@ def _render_agenda_row(
     tb_content = ShapeBuilder.add_textbox(slide, content_box)
     tf_content = tb_content.text_frame
 
-    title_budget_h = Length(int(content_height * 0.55)) if item.description else content_height
-    p_title = tf_content.paragraphs[0]
-    p_title.text = item.title
-    p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_title.font.size = FontEngine.calculate_font_size(
+    title_budget_h = content_box.scale_height(0.55) if item.description else content_height
+    title_col_key = "text_light" if item.is_active else "text_dark"
+    ShapeBuilder.add_styled_paragraph(
+        tf_content,
         item.title,
         content_box.width,
         title_budget_h,
         max_pt=14.0,
         min_pt=9.0,
-    )
-    p_title.font.bold = True
-    p_title.font.color.rgb = (
-        SlideMaster.COLORS["text_light"] if item.is_active else SlideMaster.COLORS["text_dark"]
+        color_key=title_col_key,
+        bold=True,
+        is_first=True,
     )
 
     if item.description:
-        desc_budget_h = Length(int(content_height * 0.42))
-        p_desc = tf_content.add_paragraph()
-        p_desc.text = item.description
-        p_desc.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_desc.font.size = FontEngine.calculate_font_size(
+        desc_budget_h = content_box.scale_height(0.42)
+        desc_col_key = "bg_light" if item.is_active else "text_muted"
+        ShapeBuilder.add_styled_paragraph(
+            tf_content,
             item.description,
             content_box.width,
             desc_budget_h,
             max_pt=10.0,
             min_pt=8.0,
-        )
-        p_desc.font.color.rgb = (
-            SlideMaster.COLORS["bg_light"] if item.is_active else SlideMaster.COLORS["text_muted"]
+            color_key=desc_col_key,
         )
 
 

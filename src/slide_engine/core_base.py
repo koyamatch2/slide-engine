@@ -2,8 +2,7 @@
 
 This module acts as the Single Source of Truth (SSOT) for design tokens,
 coordinates, slide master layout resolution, and shape canvas manipulations.
-It strictly avoids importing other application modules (except the low-level
-pptx_adapter primitive wrapper) to maintain a clean DAG.
+It maintains zero external application dependencies to preserve a strict DAG.
 """
 
 from __future__ import annotations
@@ -11,28 +10,20 @@ from __future__ import annotations
 import math
 import unicodedata
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length, Pt
-
-from slide_engine.pptx_adapter import (
-    add_rounded_card_shape,
-    add_styled_chart,
-    add_textbox_shape,
-    build_chart_data,
-    clean_slide_shapes,
-    create_rgb_color,
-    set_cell_solid_fill,
-)
 
 ColorType = RGBColor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pptx.chart.data import CategoryChartData
-    from pptx.enum.chart import XL_CHART_TYPE
     from pptx.presentation import Presentation as PresentationType
     from pptx.shapes.autoshape import Shape
     from pptx.slide import Slide, SlideLayout
@@ -57,6 +48,68 @@ class BoundingBox:
     def bottom(self) -> Length:
         """Calculate bottom boundary."""
         return Length(self.top + self.height)
+
+    def inset(
+        self,
+        pad_x: Length,
+        pad_y: Length | None = None,
+        *,
+        max_ratio_x: float = 1.0,
+        max_ratio_y: float = 1.0,
+        min_w: Length | None = None,
+        min_h: Length | None = None,
+    ) -> BoundingBox:
+        """Create a new inner bounding box reduced by padding with safety limits."""
+        raw_pad_y = pad_x if pad_y is None else pad_y
+        eff_pad_x = Length(min(int(pad_x), int(self.width * max_ratio_x)))
+        eff_pad_y = Length(min(int(raw_pad_y), int(self.height * max_ratio_y)))
+
+        default_min_w = Inches(0.400) if min_w is None else min_w
+        default_min_h = Inches(0.300) if min_h is None else min_h
+
+        inner_w = Length(max(int(default_min_w), int(self.width - (eff_pad_x * 2))))
+        inner_h = Length(max(int(default_min_h), int(self.height - (eff_pad_y * 2))))
+
+        return BoundingBox(
+            left=Length(self.left + eff_pad_x),
+            top=Length(self.top + eff_pad_y),
+            width=inner_w,
+            height=inner_h,
+        )
+
+    def scale_height(self, ratio: float) -> Length:
+        """Scale box height by a floating-point multiplier."""
+        return Length(int(self.height * ratio))
+
+    def scale_width(self, ratio: float) -> Length:
+        """Scale box width by a floating-point multiplier."""
+        return Length(int(self.width * ratio))
+
+    def sub_grid(
+        self,
+        rows: int,
+        cols: int,
+        gap_x: Length,
+        gap_y: Length | None = None,
+        *,
+        max_gap_x_ratio: float = 1.0,
+        max_gap_y_ratio: float = 1.0,
+    ) -> list[BoundingBox]:
+        """Compute sub-bounding boxes for a regular grid in row-major order."""
+        eff_gap_x = Length(min(int(gap_x), int(self.width * max_gap_x_ratio)))
+        raw_gap_y = gap_x if gap_y is None else gap_y
+        eff_gap_y = Length(min(int(raw_gap_y), int(self.height * max_gap_y_ratio)))
+
+        cell_w = Length(int((self.width - eff_gap_x * (cols - 1)) / cols))
+        cell_h = Length(int((self.height - eff_gap_y * (rows - 1)) / rows))
+
+        grid: list[BoundingBox] = []
+        for r_idx in range(rows):
+            for c_idx in range(cols):
+                c_left = Length(self.left + c_idx * (cell_w + eff_gap_x))
+                c_top = Length(self.top + r_idx * (cell_h + eff_gap_y))
+                grid.append(BoundingBox(c_left, c_top, cell_w, cell_h))
+        return grid
 
 
 class SlideMaster:
@@ -86,17 +139,17 @@ class SlideMaster:
 
     # Color Palette (Enterprise Navy & Neutral Standard)
     COLORS: dict[str, RGBColor] = {
-        "primary": create_rgb_color(16, 44, 87),       # Deep Navy
-        "secondary": create_rgb_color(53, 95, 142),    # Steel Blue
-        "accent": create_rgb_color(218, 98, 43),       # Burnt Orange
-        "text_dark": create_rgb_color(33, 37, 41),     # Off-Black
-        "text_light": create_rgb_color(248, 249, 250), # Off-White
-        "text_muted": create_rgb_color(108, 117, 125), # Gray
-        "bg_light": create_rgb_color(245, 247, 250),   # Light Cool Gray
-        "bg_white": create_rgb_color(255, 255, 255),   # Pure White
-        "border": create_rgb_color(222, 226, 230),     # Border Gray
-        "fallback_bg": create_rgb_color(255, 243, 205),# Soft Amber
-        "fallback_text": create_rgb_color(133, 100, 4),# Amber Dark
+        "primary": RGBColor(16, 44, 87),       # Deep Navy
+        "secondary": RGBColor(53, 95, 142),    # Steel Blue
+        "accent": RGBColor(218, 98, 43),       # Burnt Orange
+        "text_dark": RGBColor(33, 37, 41),     # Off-Black
+        "text_light": RGBColor(248, 249, 250), # Off-White
+        "text_muted": RGBColor(108, 117, 125), # Gray
+        "bg_light": RGBColor(245, 247, 250),   # Light Cool Gray
+        "bg_white": RGBColor(255, 255, 255),   # Pure White
+        "border": RGBColor(222, 226, 230),     # Border Gray
+        "fallback_bg": RGBColor(255, 243, 205),# Soft Amber
+        "fallback_text": RGBColor(133, 100, 4),# Amber Dark
     }
 
     # Typography
@@ -226,6 +279,7 @@ class FontEngine:
         max_pt: float = 14.0,
         min_pt: float = 9.0,
         line_height_multiplier: float = 1.3,
+        space_after_pt: float = 0.0,
     ) -> Length:
         """Compute the optimal font size to fit text within the target bounding box.
 
@@ -236,6 +290,7 @@ class FontEngine:
             max_pt: Maximum font size in points.
             min_pt: Minimum font size in points.
             line_height_multiplier: Inter-line spacing multiplier.
+            space_after_pt: Optional extra space after paragraph in points.
 
         Returns:
             Optimal Pt value.
@@ -243,26 +298,34 @@ class FontEngine:
         if not text:
             return cls.pt(max_pt)
 
+        # Precompute paragraph em widths once to avoid expensive repetitive scans in search loop
+        paragraphs = text.split("\n")
+        para_specs = [(cls._effective_text_em_width(p) if p else 0.0, bool(p)) for p in paragraphs]
+
         target_pt = max_pt
         box_width_pt = box_width.pt
         box_height_pt = box_height.pt
 
         while target_pt >= min_pt:
             avail_em = max(1.0, box_width_pt / target_pt)
-            lines_count = 0
-            for paragraph in text.split("\n"):
-                if not paragraph:
-                    lines_count += 1
-                else:
-                    eff_em = cls._effective_text_em_width(paragraph)
-                    lines_count += max(1, math.ceil(eff_em / avail_em))
-
-            total_text_height = lines_count * (target_pt * line_height_multiplier)
+            lines_count = cls._estimate_line_count(para_specs, avail_em)
+            total_text_height = (lines_count * target_pt * line_height_multiplier) + space_after_pt
             if total_text_height <= box_height_pt:
                 return cls.pt(target_pt)
             target_pt -= 0.5
 
         return cls.pt(min_pt)
+
+    @staticmethod
+    def _estimate_line_count(para_specs: list[tuple[float, bool]], avail_em: float) -> int:
+        """Estimate lines needed across all paragraphs with zero deep nesting."""
+        lines = 0
+        for eff_em, is_non_empty in para_specs:
+            if not is_non_empty:
+                lines += 1
+            else:
+                lines += max(1, math.ceil(eff_em / avail_em))
+        return lines
 
 
 class ShapeBuilder:
@@ -288,16 +351,26 @@ class ShapeBuilder:
         Returns:
             The created Shape instance.
         """
-        return add_rounded_card_shape(
-            slide=slide,
-            left=box.left,
-            top=box.top,
-            width=box.width,
-            height=box.height,
-            bg_color=bg_color,
-            border_color=border_color,
-            border_width=FontEngine.pt(border_width_pt),
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            box.left,
+            box.top,
+            box.width,
+            box.height,
         )
+        if bg_color is not None:
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = bg_color
+        else:
+            shape.fill.background()
+
+        if border_color is not None:
+            shape.line.color.rgb = border_color
+            shape.line.width = FontEngine.pt(border_width_pt)
+        else:
+            shape.line.fill.background()
+
+        return shape
 
     @staticmethod
     def add_textbox(
@@ -315,19 +388,25 @@ class ShapeBuilder:
         Returns:
             The created Shape instance.
         """
-        return add_textbox_shape(
-            slide=slide,
-            left=box.left,
-            top=box.top,
-            width=box.width,
-            height=box.height,
-            margin_zero=margin_zero,
-        )
+        textbox = slide.shapes.add_textbox(box.left, box.top, box.width, box.height)
+        tf = textbox.text_frame
+        tf.word_wrap = True
+        if margin_zero:
+            tf.margin_left = Inches(0)
+            tf.margin_right = Inches(0)
+            tf.margin_top = Inches(0)
+            tf.margin_bottom = Inches(0)
+        return textbox
 
     @staticmethod
     def set_cell_solid_fill(cell: _Cell, color: RGBColor) -> None:
         """Apply solid fill and RGB color to a table cell."""
-        set_cell_solid_fill(cell, color)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = color
+        cell.margin_left = Length(Pt(3.0))
+        cell.margin_right = Length(Pt(3.0))
+        cell.margin_top = Length(Pt(1.5))
+        cell.margin_bottom = Length(Pt(1.5))
 
     @staticmethod
     def build_chart_data(
@@ -335,7 +414,11 @@ class ShapeBuilder:
         series_items: Sequence[tuple[str, Sequence[float]]],
     ) -> CategoryChartData:
         """Construct CategoryChartData safely encapsulating untyped pptx calls."""
-        return build_chart_data(categories, series_items)
+        chart_data = CategoryChartData()
+        chart_data.categories = categories
+        for name, values in series_items:
+            chart_data.add_series(name, list(values))
+        return chart_data
 
     @staticmethod
     def add_styled_chart(
@@ -347,17 +430,25 @@ class ShapeBuilder:
         series_colors: Sequence[RGBColor],
     ) -> None:
         """Add and style a chart within the target bounding box."""
-        add_styled_chart(
-            slide=slide,
-            chart_type=chart_type,
-            left=box.left,
-            top=box.top,
-            width=box.width,
-            height=box.height,
-            chart_data=chart_data,
-            font_family=font_family,
-            series_colors=series_colors,
+        chart_shape = slide.shapes.add_chart(
+            chart_type,
+            box.left,
+            box.top,
+            box.width,
+            box.height,
+            chart_data,  # type: ignore[arg-type]
         )
+        chart = getattr(chart_shape, "chart", chart_shape)
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.TOP
+        chart.legend.include_in_layout = False
+        chart.legend.font.name = font_family
+
+        if series_colors:
+            for idx, series_obj in enumerate(chart.series):
+                rgb_color = series_colors[idx % len(series_colors)]
+                series_obj.format.fill.solid()
+                series_obj.format.fill.fore_color.rgb = rgb_color
 
     @staticmethod
     def clean_slide_canvas(slide: Slide) -> None:
@@ -369,7 +460,110 @@ class ShapeBuilder:
         Args:
             slide: Target slide.
         """
-        clean_slide_shapes(slide)
+        for shape in list(slide.shapes):
+            sp_elem = shape.element
+            sp_elem.getparent().remove(sp_elem)
+
+    @staticmethod
+    def purge_existing_slides(prs: PresentationType) -> None:
+        """Purge all pre-existing dummy slides from the master presentation."""
+        for i in range(len(prs.slides) - 1, -1, -1):
+            r_id = prs.slides._sldIdLst[i].rId
+            prs.part.drop_rel(r_id)
+            del prs.slides._sldIdLst[i]
+
+    @classmethod
+    def add_styled_paragraph(
+        cls,
+        tf: Any,
+        text: str,
+        width: Length,
+        height: Length,
+        *,
+        max_pt: float,
+        min_pt: float = 8.0,
+        color_key: str = "text_dark",
+        bold: bool = False,
+        alignment: PP_ALIGN | None = None,
+        font_family: str = SlideMaster.FONT_FAMILY_PRIMARY,
+        space_after_pt: float | None = None,
+        is_first: bool = False,
+    ) -> Any:
+        """Add and format a styled paragraph with automated font scaling.
+
+        Args:
+            tf: Target TextFrame.
+            text: Text content.
+            width: Available width for font fitting.
+            height: Available height budget for font fitting.
+            max_pt: Maximum font size in points.
+            min_pt: Minimum font size in points.
+            color_key: Color name in SlideMaster.COLORS.
+            bold: Bold styling.
+            alignment: Optional text alignment.
+            font_family: Font family name.
+            space_after_pt: Optional space after paragraph in points.
+            is_first: Whether to reuse existing first paragraph if empty.
+
+        Returns:
+            The created or reused Paragraph.
+        """
+        p = (
+            tf.paragraphs[0]
+            if (is_first and len(tf.paragraphs) > 0 and not tf.paragraphs[0].text)
+            else tf.add_paragraph()
+        )
+        p.text = text
+        p.font.name = font_family
+        p.font.size = FontEngine.calculate_font_size(
+            text,
+            width,
+            height,
+            max_pt=max_pt,
+            min_pt=min_pt,
+            space_after_pt=space_after_pt or 0.0,
+        )
+        p.font.bold = bold
+        p.font.color.rgb = SlideMaster.COLORS[color_key]
+        if alignment is not None:
+            p.alignment = alignment
+        if space_after_pt is not None:
+            p.space_after = FontEngine.pt(space_after_pt)
+        return p
+
+    @classmethod
+    def add_styled_textbox(
+        cls,
+        slide: Slide,
+        box: BoundingBox,
+        text: str,
+        *,
+        max_pt: float,
+        min_pt: float = 8.0,
+        color_key: str = "text_dark",
+        bold: bool = False,
+        alignment: PP_ALIGN | None = None,
+        font_family: str = SlideMaster.FONT_FAMILY_PRIMARY,
+        margin_zero: bool = True,
+        space_after_pt: float | None = None,
+    ) -> Shape:
+        """Add a complete textbox with styled single-paragraph text."""
+        tb = cls.add_textbox(slide, box, margin_zero=margin_zero)
+        cls.add_styled_paragraph(
+            tb.text_frame,
+            text,
+            box.width,
+            box.height,
+            max_pt=max_pt,
+            min_pt=min_pt,
+            color_key=color_key,
+            bold=bold,
+            alignment=alignment,
+            font_family=font_family,
+            space_after_pt=space_after_pt,
+            is_first=True,
+        )
+        return tb
 
 
 def render_standard_header(
@@ -398,37 +592,40 @@ def render_standard_header(
 
     # 1. Subtitle / Tracker Category
     if subtitle:
-        p_sub = tf.paragraphs[0]
-        p_sub.text = subtitle.upper()
-        p_sub.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_sub.font.size = FontEngine.pt(10.0)
-        p_sub.font.bold = True
-        p_sub.font.color.rgb = SlideMaster.COLORS["secondary"]
-        p_sub.space_after = FontEngine.pt(2.0)
-        p_title = tf.add_paragraph()
-        title_avail_h = Length(Inches(0.700))
+        sub_avail_h = header_box.scale_height(0.28)
+        ShapeBuilder.add_styled_paragraph(
+            tf,
+            subtitle.upper(),
+            header_box.width,
+            sub_avail_h,
+            max_pt=10.0,
+            min_pt=10.0,
+            color_key="secondary",
+            bold=True,
+            space_after_pt=2.0,
+            is_first=True,
+        )
+        title_avail_h = header_box.scale_height(0.72)
     else:
-        p_title = tf.paragraphs[0]
         title_avail_h = header_box.height
 
     # 2. Main Slide Title
-    p_title.text = title
-    p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_title.font.size = FontEngine.calculate_font_size(
+    ShapeBuilder.add_styled_paragraph(
+        tf,
         title,
         header_box.width,
         title_avail_h,
         max_pt=20.0,
         min_pt=14.0,
+        color_key="primary",
+        bold=True,
+        is_first=not bool(subtitle),
     )
-    p_title.font.bold = True
-    p_title.font.color.rgb = SlideMaster.COLORS["primary"]
 
     # 3. Optional Lead Text Box
     if lead_text:
         lead_box, _ = SlideMaster.get_body_box_with_lead(has_lead_text=True)
         if lead_box:
-            # Subtle card backdrop for lead text
             ShapeBuilder.add_card(
                 slide,
                 lead_box,
@@ -436,22 +633,13 @@ def render_standard_header(
                 border_color=SlideMaster.COLORS["border"],
                 border_width_pt=0.75,
             )
-            inner_box = BoundingBox(
-                left=Length(lead_box.left + Inches(0.200)),
-                top=Length(lead_box.top + Inches(0.120)),
-                width=Length(lead_box.width - Inches(0.400)),
-                height=Length(lead_box.height - Inches(0.240)),
-            )
-            tb_lead = ShapeBuilder.add_textbox(slide, inner_box)
-            p_lead = tb_lead.text_frame.paragraphs[0]
-            p_lead.text = lead_text
-            p_lead.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-            p_lead.font.size = FontEngine.calculate_font_size(
+            inner_box = lead_box.inset(Inches(0.200), Inches(0.120))
+            ShapeBuilder.add_styled_textbox(
+                slide,
+                inner_box,
                 lead_text,
-                inner_box.width,
-                inner_box.height,
                 max_pt=12.0,
-                min_pt=9.0,
+                min_pt=8.0,
+                color_key="secondary",
+                bold=True,
             )
-            p_lead.font.bold = True
-            p_lead.font.color.rgb = SlideMaster.COLORS["secondary"]

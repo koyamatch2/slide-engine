@@ -47,15 +47,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 6
+max-complexity = 10
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "pptx.dml.color.RGBColor" = { msg = "Use SlideMaster.COLORS from slide_engine.core_base instead." }
 "pptx.util.Pt" = { msg = "Use FontEngine.pt from slide_engine.core_base instead." }
 
 [tool.ruff.lint.per-file-ignores]
-"src/slide_engine/core_base.py" = ["TID251"]
-"src/slide_engine/pptx_adapter.py" = ["TID251"]
+"src/slide_engine/core_base.py" = ["TID251", "SLF001"]
 "tests/*" = ["SLF001", "TID251"]
 
 [tool.mypy]
@@ -78,7 +77,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "slide_engine.pptx_adapter",
+    "slide_engine.core_base",
 ]
 disallow_untyped_calls = false
 

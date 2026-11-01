@@ -5,16 +5,47 @@ Renders presentation title, subtitle, presenter, and date.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pptx.util import Inches, Length
+from pptx.util import Inches
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
-from slide_engine.models import Core01Payload
+from slide_engine.core_base import BoundingBox, ShapeBuilder
+from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
 
+
+class Core01Payload(BasePayload):
+    """Payload for Cover slide (CORE-01)."""
+
+    title: ShortText
+    subtitle: SafeText | None = None
+    presenter: ShortText | None = None
+    date_str: ShortText | None = None
+
+
+_SAMPLE_CORE01: dict[str, Any] = {
+    "title": "次世代エンタープライズ統合データプラットフォーム刷新計画および移行戦略ロードマップ策定",
+    "subtitle": "2026年度〜2028年度 中期経営計画における基幹系データベースとデータレイクハウスの完全統合アーキテクチャ設計書",
+    "presenter": "デジタル変革推進本部 エンタープライズアーキテクチャグループ",
+    "date_str": "2026年11月1日 (最終版)",
+}
+
+_INVALID_SAMPLES_CORE01: list[dict[str, Any]] = [
+    {"title": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN (120)
+]
+
+SPEC = TemplateSpec(
+    payload_type=Core01Payload,
+    supports_split=False,
+    description="Cover Slide",
+    sample_payload=_SAMPLE_CORE01,
+    invalid_sample_payloads=_INVALID_SAMPLES_CORE01,
+    renders_header=False,
+    layout_type="cover",
+    is_fallback=False,
+)
 
 # Cover Layout Constants
 COVER_LEFT = Inches(1.200)
@@ -44,48 +75,36 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
     tb_title = ShapeBuilder.add_textbox(slide, title_box)
     tf_title = tb_title.text_frame
 
-    title_budget_h = Length(int(COVER_HEIGHT * 0.55)) if payload.subtitle else COVER_HEIGHT
+    title_budget_h = title_box.scale_height(0.55) if payload.subtitle else COVER_HEIGHT
 
     # Main Title
-    p_title = tf_title.paragraphs[0]
-    p_title.text = payload.title
-    p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_title.font.size = FontEngine.calculate_font_size(
+    ShapeBuilder.add_styled_paragraph(
+        tf_title,
         payload.title,
         COVER_WIDTH,
         title_budget_h,
         max_pt=32.0,
         min_pt=18.0,
+        color_key="primary",
+        bold=True,
+        space_after_pt=14.0,
+        is_first=True,
     )
-    p_title.font.bold = True
-    p_title.font.color.rgb = SlideMaster.COLORS["primary"]
-    p_title.space_after = FontEngine.pt(14.0)
 
     # Subtitle
     if payload.subtitle:
-        sub_budget_h = Length(int(COVER_HEIGHT * 0.35))
-        p_sub = tf_title.add_paragraph()
-        p_sub.text = payload.subtitle
-        p_sub.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_sub.font.size = FontEngine.calculate_font_size(
+        sub_budget_h = title_box.scale_height(0.35)
+        ShapeBuilder.add_styled_paragraph(
+            tf_title,
             payload.subtitle,
             COVER_WIDTH,
             sub_budget_h,
             max_pt=16.0,
             min_pt=10.0,
+            color_key="secondary",
         )
-        p_sub.font.color.rgb = SlideMaster.COLORS["secondary"]
 
     # 2. Presenter and Date Metadata Box
-    meta_box = BoundingBox(
-        left=COVER_LEFT,
-        top=META_OFFSET_TOP,
-        width=COVER_WIDTH,
-        height=META_HEIGHT,
-    )
-    tb_meta = ShapeBuilder.add_textbox(slide, meta_box)
-    tf_meta = tb_meta.text_frame
-
     meta_parts: list[str] = []
     if payload.presenter:
         meta_parts.append(payload.presenter)
@@ -93,16 +112,18 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
         meta_parts.append(payload.date_str)
 
     if meta_parts:
-        meta_str = "  |  ".join(meta_parts)
-        p_meta = tf_meta.paragraphs[0]
-        p_meta.text = meta_str
-        p_meta.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_meta.font.size = FontEngine.calculate_font_size(
-            meta_str,
-            COVER_WIDTH,
-            META_HEIGHT,
+        meta_box = BoundingBox(
+            left=COVER_LEFT,
+            top=META_OFFSET_TOP,
+            width=COVER_WIDTH,
+            height=META_HEIGHT,
+        )
+        ShapeBuilder.add_styled_textbox(
+            slide,
+            meta_box,
+            "  |  ".join(meta_parts),
             max_pt=11.0,
             min_pt=9.0,
+            color_key="text_muted",
+            bold=True,
         )
-        p_meta.font.bold = True
-        p_meta.font.color.rgb = SlideMaster.COLORS["text_muted"]

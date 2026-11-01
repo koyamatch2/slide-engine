@@ -7,20 +7,72 @@ switches to a 2x2 or vertical stack layout inside narrow split panes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pptx.util import Inches, Length
+from pptx.util import Inches
+from pydantic import Field
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
-from slide_engine.models import Core60Payload, KpiMetric
+from slide_engine.models import BasePayload, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
 
 
+class KpiMetric(BasePayload):
+    """Metric item for KPI summary card."""
+
+    value: ShortText
+    unit: ShortText | None = None
+    label: ShortText
+    trend: ShortText | None = None
+    is_positive: bool | None = None
+
+
+class Core60Payload(BasePayload):
+    """Payload for KPI Summary Cards slide (CORE-60)."""
+
+    metrics: list[KpiMetric] = Field(min_length=2, max_length=4)
+
+
+_SAMPLE_CORE60: dict[str, Any] = {
+    "metrics": [
+        {
+            "label": f"重要業績評価指標 {i}",
+            "value": f"{i * 128.5}",
+            "unit": "億円",
+            "trend": f"前年同期比 +{i * 6.4}% 達成",
+            "is_positive": True,
+        }
+        for i in range(1, 5)
+    ]
+}
+
+_INVALID_SAMPLES_CORE60: list[dict[str, Any]] = [
+    {"metrics": [{"label": "A", "value": "1"}]},  # Violates min_length=2
+]
+
+SPEC = TemplateSpec(
+    payload_type=Core60Payload,
+    supports_split=True,
+    description="KPI Summary Cards",
+    sample_payload=_SAMPLE_CORE60,
+    invalid_sample_payloads=_INVALID_SAMPLES_CORE60,
+)
+
+
 CARD_GAP = Inches(0.200)
 CARD_INNER_PAD = Inches(0.220)
 MIN_KPI_COL_WIDTH = Inches(1.850)
+
+
+def _resolve_trend_color(is_positive: bool | None) -> str:
+    """Resolve trend badge color key based on polarity."""
+    if is_positive is True:
+        return "secondary"
+    if is_positive is False:
+        return "accent"
+    return "text_muted"
 
 
 def _render_kpi_card(
@@ -37,38 +89,28 @@ def _render_kpi_card(
         border_width_pt=1.0,
     )
 
-    pad_x = Length(min(int(CARD_INNER_PAD), int(card_box.width * 0.08)))
-    pad_y = Length(min(int(CARD_INNER_PAD), int(card_box.height * 0.10)))
-
-    inner_box = BoundingBox(
-        left=Length(card_box.left + pad_x),
-        top=Length(card_box.top + pad_y),
-        width=Length(max(int(Inches(0.400)), int(card_box.width - (pad_x * 2)))),
-        height=Length(max(int(Inches(0.300)), int(card_box.height - (pad_y * 2)))),
-    )
+    inner_box = card_box.inset(CARD_INNER_PAD, CARD_INNER_PAD, max_ratio_x=0.08, max_ratio_y=0.10)
     tb = ShapeBuilder.add_textbox(slide, inner_box)
     tf = tb.text_frame
 
-    label_avail_h = Length(int(inner_box.height * 0.22))
-    val_avail_h = Length(int(inner_box.height * 0.45))
-    trend_avail_h = Length(int(inner_box.height * 0.22))
+    label_avail_h = inner_box.scale_height(0.22)
+    val_avail_h = inner_box.scale_height(0.45)
+    trend_avail_h = inner_box.scale_height(0.22)
     space_gap_pt = min(10.0, max(2.0, inner_box.height.pt * 0.04))
 
     # Metric Label
-    p_label = tf.paragraphs[0]
-    label_text = metric.label.upper()
-    p_label.text = label_text
-    p_label.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_label.font.size = FontEngine.calculate_font_size(
-        label_text,
+    ShapeBuilder.add_styled_paragraph(
+        tf,
+        metric.label.upper(),
         inner_box.width,
         label_avail_h,
         max_pt=11.0,
         min_pt=8.0,
+        color_key="text_muted",
+        bold=True,
+        space_after_pt=space_gap_pt,
+        is_first=True,
     )
-    p_label.font.bold = True
-    p_label.font.color.rgb = SlideMaster.COLORS["text_muted"]
-    p_label.space_after = FontEngine.pt(space_gap_pt)
 
     # Big Number Value + Unit
     full_val_text = f"{metric.value} {metric.unit}" if metric.unit else metric.value
@@ -100,23 +142,16 @@ def _render_kpi_card(
 
     # Trend Indicator
     if metric.trend:
-        p_trend = tf.add_paragraph()
-        p_trend.text = metric.trend
-        p_trend.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-        p_trend.font.size = FontEngine.calculate_font_size(
+        ShapeBuilder.add_styled_paragraph(
+            tf,
             metric.trend,
             inner_box.width,
             trend_avail_h,
             max_pt=10.5,
             min_pt=8.0,
+            color_key=_resolve_trend_color(metric.is_positive),
+            bold=True,
         )
-        p_trend.font.bold = True
-        if metric.is_positive is True:
-            p_trend.font.color.rgb = SlideMaster.COLORS["secondary"]
-        elif metric.is_positive is False:
-            p_trend.font.color.rgb = SlideMaster.COLORS["accent"]
-        else:
-            p_trend.font.color.rgb = SlideMaster.COLORS["text_muted"]
 
 
 def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> None:
@@ -133,19 +168,14 @@ def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> No
         cols = 2
     rows = -(-num_cards // cols)
 
-    gap_x = Length(min(int(CARD_GAP), int(box.width * 0.03)))
-    gap_y = Length(min(int(CARD_GAP), int(box.height * 0.04)))
+    grid = box.sub_grid(
+        rows=rows,
+        cols=cols,
+        gap_x=CARD_GAP,
+        gap_y=CARD_GAP,
+        max_gap_x_ratio=0.03,
+        max_gap_y_ratio=0.04,
+    )
 
-    card_width = Length(int((box.width - gap_x * (cols - 1)) / cols))
-    card_height = Length(int((box.height - gap_y * (rows - 1)) / rows))
-
-    for idx, metric in enumerate(payload.metrics):
-        r_idx = idx // cols
-        c_idx = idx % cols
-        card_box = BoundingBox(
-            left=Length(box.left + c_idx * (card_width + gap_x)),
-            top=Length(box.top + r_idx * (card_height + gap_y)),
-            width=card_width,
-            height=card_height,
-        )
+    for metric, card_box in zip(payload.metrics, grid, strict=False):
         _render_kpi_card(slide, metric, card_box)

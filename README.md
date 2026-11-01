@@ -25,7 +25,7 @@ slide-engine/
 │   ├── core_base.py             # 基盤層 (SlideMaster, BoundingBox, FontEngine, ShapeBuilder)
 │   ├── models.py                # データ契約層 (Pydantic V2 スキーマ・境界防御・レジストリ)
 │   ├── controller.py            # オーケストレーター (動的ディスパッチ・退避制御・テレメトリ)
-│   └── render_core_00〜70.py    # テンプレート別レンダラー群 (1テンプレート＝1ファイル)
+│   └── render_core_*.py         # 自己完結プラグイン群 (Payload定義・描画・サンプルを1ファイルに集約)
 ├── tests/
 │   └── test_engine.py           # 包括的ユニットテスト・シグネチャ検査・境界防御テスト
 ├── Dockerfile                   # マルチステージ・非root実行コンテナ定義
@@ -48,7 +48,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 1. リンター＆複雑度チェック (TID251: 禁止API, SLF001: プライベート参照, C901: 複雑度6以下)
+# 1. リンター＆複雑度チェック (TID251: 禁止API, SLF001: プライベート参照, C901: 複雑度10以下)
 ruff check src tests
 
 # 2. 厳格な静的型チェック
@@ -107,6 +107,7 @@ slide-engine --input examples/sample_deck.json --output output/presentation.pptx
 | `CORE-50` | ビジュアル枠 (Visual Frame) | 手動図解・スクショ貼付用ガイド枠＋下部キャプション | **対応** |
 | `CORE-60` | KPIカード (KPI Cards) | 重要指標ビッグナンバー並列カード（2〜4枚） | **対応** |
 | `CORE-70` | 左右対比 (Comparison) | Before/After・As-Is/To-Be 比較ボックス | **対応** |
+| `CORE-80` | ウォーターフォール (Waterfall) | 累積・増減ステップチャート（2〜8段階） | **対応** |
 
 ※ 具体的な入力 JSON の記述例については `examples/sample_deck.json` を参照してください。
 

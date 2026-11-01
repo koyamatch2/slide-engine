@@ -212,6 +212,57 @@
       }
     },
     {
+      "template_id": "CORE-80",
+      "title": "年間売上高の増減要因ウォーターフォール分析",
+      "subtitle": "REVENUE BRIDGE ANALYSIS",
+      "lead_text": "国内既存事業の伸長と新規クラウド事業の急成長が寄与し、原材料・為替・構造改革コストを吸収して着地予測645億円を達成。",
+      "payload": {
+        "unit": "億円",
+        "steps": [
+          {
+            "label": "前期売上高",
+            "value": 500.0,
+            "is_total": true
+          },
+          {
+            "label": "国内既存事業伸長",
+            "value": 120.0,
+            "is_total": false
+          },
+          {
+            "label": "新規クラウド事業",
+            "value": 85.0,
+            "is_total": false
+          },
+          {
+            "label": "原材料調達コスト高騰",
+            "value": -45.0,
+            "is_total": false
+          },
+          {
+            "label": "為替変動影響",
+            "value": -25.0,
+            "is_total": false
+          },
+          {
+            "label": "構造改革人件費見直し",
+            "value": -30.0,
+            "is_total": false
+          },
+          {
+            "label": "業務効率化推進効果",
+            "value": 40.0,
+            "is_total": false
+          },
+          {
+            "label": "当期売上高着地予測",
+            "value": 645.0,
+            "is_total": true
+          }
+        ]
+      }
+    },
+    {
       "template_id": "CORE-10",
       "title": "異種ハイブリッド分割：仕様定義と構成図",
       "subtitle": "HETEROGENEOUS SPLIT LAYOUT",
@@ -231,6 +282,62 @@
         "caption": "各処理レイヤーのレイテンシと暗号化境界"
       },
       "split_ratio": 0.5
+    },
+    {
+      "template_id": "CORE-80",
+      "title": "複合スプリット分割：損益ブリッジとKPIサマリー",
+      "subtitle": "FINANCIAL BRIDGE & PERFORMANCE KPIS",
+      "lead_text": "左ペインに主要増減ステップ（CORE-80）、右ペインに関連重要業績指標（CORE-60）を連動配置。",
+      "payload": {
+        "unit": "億円",
+        "steps": [
+          {
+            "label": "前期売上",
+            "value": 500.0,
+            "is_total": true
+          },
+          {
+            "label": "既存成長",
+            "value": 120.0,
+            "is_total": false
+          },
+          {
+            "label": "新規参入",
+            "value": 85.0,
+            "is_total": false
+          },
+          {
+            "label": "為替影響",
+            "value": -25.0,
+            "is_total": false
+          },
+          {
+            "label": "当期実績",
+            "value": 680.0,
+            "is_total": true
+          }
+        ]
+      },
+      "right_template_id": "CORE-60",
+      "right_payload": {
+        "metrics": [
+          {
+            "label": "売上高達成率",
+            "value": "106.3",
+            "unit": "%",
+            "trend": "期初計画比 +6.3pt",
+            "is_positive": true
+          },
+          {
+            "label": "営業利益率",
+            "value": "18.2",
+            "unit": "%",
+            "trend": "前年同期比 +2.4pt",
+            "is_positive": true
+          }
+        ]
+      },
+      "split_ratio": 0.55
     }
   ]
 }
