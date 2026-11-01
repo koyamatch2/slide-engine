@@ -8,18 +8,22 @@ It strictly avoids importing other application modules to maintain a clean DAG.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches, Length, Pt
+
+from slide_engine.pptx_adapter import (
+    ShapeBuilder as ShapeBuilder,
+)
+from slide_engine.pptx_adapter import (
+    create_rgb_color,
+)
 
 ColorType = RGBColor
 
 if TYPE_CHECKING:
     from pptx.presentation import Presentation as PresentationType
-    from pptx.shapes.autoshape import Shape
     from pptx.slide import Slide, SlideLayout
 
 
@@ -70,17 +74,17 @@ class SlideMaster:
 
     # Color Palette (Enterprise Navy & Neutral Standard)
     COLORS: dict[str, RGBColor] = {
-        "primary": RGBColor(16, 44, 87),       # Deep Navy
-        "secondary": RGBColor(53, 95, 142),    # Steel Blue
-        "accent": RGBColor(218, 98, 43),       # Burnt Orange
-        "text_dark": RGBColor(33, 37, 41),     # Off-Black
-        "text_light": RGBColor(248, 249, 250), # Off-White
-        "text_muted": RGBColor(108, 117, 125), # Gray
-        "bg_light": RGBColor(245, 247, 250),   # Light Cool Gray
-        "bg_white": RGBColor(255, 255, 255),   # Pure White
-        "border": RGBColor(222, 226, 230),     # Border Gray
-        "fallback_bg": RGBColor(255, 243, 205),# Soft Amber
-        "fallback_text": RGBColor(133, 100, 4),# Amber Dark
+        "primary": create_rgb_color(16, 44, 87),       # Deep Navy
+        "secondary": create_rgb_color(53, 95, 142),    # Steel Blue
+        "accent": create_rgb_color(218, 98, 43),       # Burnt Orange
+        "text_dark": create_rgb_color(33, 37, 41),     # Off-Black
+        "text_light": create_rgb_color(248, 249, 250), # Off-White
+        "text_muted": create_rgb_color(108, 117, 125), # Gray
+        "bg_light": create_rgb_color(245, 247, 250),   # Light Cool Gray
+        "bg_white": create_rgb_color(255, 255, 255),   # Pure White
+        "border": create_rgb_color(222, 226, 230),     # Border Gray
+        "fallback_bg": create_rgb_color(255, 243, 205),# Soft Amber
+        "fallback_text": create_rgb_color(133, 100, 4),# Amber Dark
     }
 
     # Typography
@@ -185,39 +189,39 @@ class FontEngine:
     CHAR_WIDTH_RATIO = 0.58
 
     @staticmethod
-    def pt(size: float) -> Pt:
-        """Safely construct a Pt instance conforming to banned-api rule."""
-        return Pt(size)
+    def pt(size: float) -> Length:
+        """Safely construct a Length point value conforming to banned-api rule."""
+        return Length(Pt(size))
 
     @classmethod
     def calculate_font_size(
         cls,
         text: str,
-        box_width: Inches,
-        box_height: Inches,
+        box_width: Length,
+        box_height: Length,
         max_pt: float = 14.0,
         min_pt: float = 9.0,
         line_height_multiplier: float = 1.3,
-    ) -> Pt:
+    ) -> Length:
         """Compute the optimal font size to fit text within the target bounding box.
 
         Args:
             text: Text content to render.
-            box_width: Available width.
-            box_height: Available height.
+            box_width: Available width Length.
+            box_height: Available height Length.
             max_pt: Maximum font size in points.
             min_pt: Minimum font size in points.
             line_height_multiplier: Inter-line spacing multiplier.
 
         Returns:
-            Optimal Pt value.
+            Optimal Length point value.
         """
         if not text:
             return cls.pt(max_pt)
 
         target_pt = max_pt
-        box_width_pt = box_width / Inches(1) * 72
-        box_height_pt = box_height / Inches(1) * 72
+        box_width_pt = box_width.pt
+        box_height_pt = box_height.pt
 
         while target_pt >= min_pt:
             char_width_pt = target_pt * cls.CHAR_WIDTH_RATIO
@@ -236,107 +240,6 @@ class FontEngine:
             target_pt -= 0.5
 
         return cls.pt(min_pt)
-
-
-class ShapeBuilder:
-    """Helper methods for constructing PowerPoint shapes, borders, and text boxes."""
-
-    @staticmethod
-    def add_card(
-        slide: Slide,
-        box: BoundingBox,
-        bg_color: RGBColor | None = None,
-        border_color: RGBColor | None = None,
-        border_width_pt: float = 1.0,
-    ) -> Shape:
-        """Add a rounded or standard rectangular card shape.
-
-        Args:
-            slide: Target slide.
-            box: BoundingBox coordinates.
-            bg_color: Fill color.
-            border_color: Line border color.
-            border_width_pt: Border width in points.
-
-        Returns:
-            The created Shape instance.
-        """
-        shape = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            box.left,
-            box.top,
-            box.width,
-            box.height,
-        )
-        if bg_color is not None:
-            shape.fill.solid()
-            shape.fill.fore_color.rgb = bg_color
-        else:
-            shape.fill.background()
-
-        if border_color is not None:
-            shape.line.color.rgb = border_color
-            shape.line.width = FontEngine.pt(border_width_pt)
-        else:
-            shape.line.fill.background()
-
-        return shape
-
-    @staticmethod
-    def add_textbox(
-        slide: Slide,
-        box: BoundingBox,
-        margin_zero: bool = True,
-    ) -> Shape:
-        """Add an empty text box with optional zero-margin reset.
-
-        Args:
-            slide: Target slide.
-            box: BoundingBox coordinates.
-            margin_zero: Whether to set text frame internal margins to 0.
-
-        Returns:
-            The created Shape instance.
-        """
-        textbox = slide.shapes.add_textbox(box.left, box.top, box.width, box.height)
-        tf = textbox.text_frame
-        tf.word_wrap = True
-        if margin_zero:
-            tf.margin_left = Inches(0)
-            tf.margin_right = Inches(0)
-            tf.margin_top = Inches(0)
-            tf.margin_bottom = Inches(0)
-        return textbox
-
-    @staticmethod
-    def set_cell_solid_fill(cell: Any, color: RGBColor) -> None:
-        """Apply solid fill and RGB color to a table cell."""
-        cell.fill.solid()
-        cell.fill.fore_color.rgb = color
-
-    @staticmethod
-    def build_chart_data(categories: list[str], series_list: list[Any]) -> Any:
-        """Construct CategoryChartData safely encapsulating untyped pptx calls."""
-        chart_data = CategoryChartData()
-        chart_data.categories = categories
-        for s in series_list:
-            chart_data.add_series(s.name, s.values)
-        return chart_data
-
-    @staticmethod
-    def clean_slide_canvas(slide: Slide) -> None:
-        """Purge empty shapes and master placeholders while preserving backgrounds.
-
-        Safely iterates over shapes in reverse to delete raw `sp` elements without
-        affecting the master presentation background or static master graphics.
-
-        Args:
-            slide: Target slide.
-        """
-        for shape in list(slide.shapes):
-            # Keep slide master static graphics, purge slide-level dynamic/placeholder shapes
-            sp_elem = shape.element
-            sp_elem.getparent().remove(sp_elem)
 
 
 def render_standard_header(

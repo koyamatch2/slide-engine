@@ -55,6 +55,7 @@ max-complexity = 6
 
 [tool.ruff.lint.per-file-ignores]
 "src/slide_engine/core_base.py" = ["TID251"]
+"src/slide_engine/pptx_adapter.py" = ["TID251"]
 "tests/*" = ["SLF001", "TID251"]
 
 [tool.mypy]
@@ -77,7 +78,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "slide_engine.core_base",
+    "slide_engine.pptx_adapter",
 ]
 disallow_untyped_calls = false
 

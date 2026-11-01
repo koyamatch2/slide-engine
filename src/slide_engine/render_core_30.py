@@ -6,7 +6,7 @@ canvas, ensuring embedded Excel sheet data integrity and client-side editability
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 
@@ -37,12 +37,10 @@ def render_core_30(slide: Slide, payload: Core30Payload, box: BoundingBox) -> No
 
     xl_chart_type = CHART_TYPE_MAP.get(payload.chart_type, XL_CHART_TYPE.COLUMN_CLUSTERED)
 
-    chart_shape = slide.shapes.add_chart(
+    chart_shape: Any = ShapeBuilder.add_chart(
+        slide,
         xl_chart_type,
-        box.left,
-        box.top,
-        box.width,
-        box.height,
+        box,
         chart_data,
     )
     chart = getattr(chart_shape, "chart", chart_shape)
