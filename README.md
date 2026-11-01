@@ -21,10 +21,10 @@ slide-engine/
 ├── output/                      # 生成された .pptx の出力先ディレクトリ
 ├── src/slide_engine/
 │   ├── __init__.py              # パッケージ公開API
-│   ├── __main__.py              # CLIエントリーポイント (STDIN/STDOUT・終了コード制御)
+│   ├── __main__.py              # CLIエントリーポイント (STDIN/STDOUT・テレメトリ出力・終了コード制御)
 │   ├── core_base.py             # 基盤層 (SlideMaster, BoundingBox, FontEngine, ShapeBuilder)
 │   ├── models.py                # データ契約層 (Pydantic V2 スキーマ・境界防御・レジストリ)
-│   ├── controller.py            # オーケストレーター (動的ディスパッチ・退避制御・テレメトリ)
+│   ├── controller.py            # オーケストレーター (動的ディスパッチ・退避制御・テレメトリ集計)
 │   └── render_core_*.py         # 自己完結プラグイン群 (Payload定義・描画・サンプルを1ファイルに集約)
 ├── tests/
 │   └── test_engine.py           # 包括的ユニットテスト・シグネチャ検査・境界防御テスト
