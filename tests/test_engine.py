@@ -107,6 +107,13 @@ class TestSchemaValidationAndDefenses:
                 "image_path": "/var/tmp/diagram.png",
             })
 
+    def test_template_registry_sample_payloads_valid_against_schema(self) -> None:
+        """Every registered template's sample payloads must pass model validation against its payload_type."""
+        for _tid, spec in TEMPLATE_REGISTRY.items():
+            assert spec.payload_type.model_validate(spec.sample_payload) is not None
+            if spec.split_sample_payload is not None:
+                assert spec.payload_type.model_validate(spec.split_sample_payload) is not None
+
     @pytest.mark.parametrize(
         "slide_data,expected_match",
         [
@@ -390,136 +397,6 @@ class TestFontEngineUnit:
 # Independent Physical Layout & Invariant Verification Helpers
 # ----------------------------------------------------------------------
 
-MAX_CAPACITY_PAYLOADS: dict[str, dict[str, Any]] = {
-    "CORE-01": {
-        "title": "次世代エンタープライズ統合データプラットフォーム刷新計画および移行戦略ロードマップ策定",
-        "subtitle": "2026年度〜2028年度 中期経営計画における基幹系データベースとデータレイクハウスの完全統合アーキテクチャ設計書",
-        "presenter": "デジタル変革推進本部 エンタープライズアーキテクチャグループ",
-        "date_str": "2026年11月1日 (最終版)",
-    },
-    "CORE-02": {
-        "items": [
-            {
-                "number": f"0{i}",
-                "title": f"戦略フェーズ {i}: 全社データ基盤の統合とガバナンス強化",
-                "description": "レガシーシステムの段階的廃止とクラウドネイティブ基盤への完全移行",
-                "is_active": i == 1,
-            }
-            for i in range(1, 9)  # Max 8 items
-        ]
-    },
-    "CORE-10": {
-        "headers": [f"評価指標項目 {c}" for c in range(1, 6)],
-        "rows": [[f"データ値 {r}-{c} (検証済)" for c in range(1, 6)] for r in range(1, 16)],  # Max 15 rows
-        "highlight_row_index": 0,
-    },
-    "CORE-20": {
-        "steps": [
-            {
-                "step_number": i,
-                "title": f"工程 {i}: 基盤構築",
-                "description": f"マイクロサービス第{i}群の自動デプロイと統合監視の確立",
-            }
-            for i in range(1, 7)  # Max 6 steps
-        ]
-    },
-    "CORE-30": {
-        "chart_type": "column",
-        "categories": [f"Q{q}" for q in range(1, 9)],
-        "series": [
-            {"name": f"事業部 {s}", "values": [float(s * 10 + q) for q in range(1, 9)]}
-            for s in range(1, 5)
-        ],
-    },
-    "CORE-40": {
-        "x_axis_label": "業務定着コスト・移行難易度",
-        "y_axis_label": "全社財務インパクト・戦略貢献度",
-        "top_left": {
-            "title": "重点投資領域",
-            "badge": "P1",
-            "description": "中長期的な競争優位性を確立するための次世代AIプラットフォーム投資。",
-        },
-        "top_right": {
-            "title": "最優先推進（コア）",
-            "badge": "P0",
-            "description": "直ちに全社展開し収益拡大を牽引するミッションクリティカル施策。",
-        },
-        "bottom_left": {
-            "title": "段階的縮退・廃止",
-            "badge": "P3",
-            "description": "保守コストが高止まりしている老朽化オンプレミス資産の計画的廃棄。",
-        },
-        "bottom_right": {
-            "title": "クイックウィン",
-            "badge": "P2",
-            "description": "既存業務プロセスの自動化により短期で投資回収が可能な改善施策。",
-        },
-    },
-    "CORE-50": {
-        "placeholder_label": "ハイブリッドクラウド冗長化構成および閉域網ネットワークトポロジー図",
-        "caption": "図1: 東西リージョン間でのアクティブ・アクティブ構成と自動フェイルオーバー経路の定義",
-    },
-    "CORE-60": {
-        "metrics": [
-            {
-                "label": f"重要業績評価指標 {i}",
-                "value": f"{i * 128.5}",
-                "unit": "億円",
-                "trend": f"前年同期比 +{i * 6.4}% 達成",
-                "is_positive": True,
-            }
-            for i in range(1, 5)  # Max 4 cards
-        ]
-    },
-    "CORE-70": {
-        "left_column": {
-            "header": "現状課題 (As-Is)",
-            "sub_header": "サイロ化された個別最適システム",
-            "points": [f"部門間でのデータ連携が手動バッチに依存し遅延が発生 (課題{i})" for i in range(1, 7)],
-            "is_highlighted": False,
-        },
-        "right_column": {
-            "header": "理想姿 (To-Be)",
-            "sub_header": "イベント駆動型リアルタイム統合基盤",
-            "points": [f"ゼロトラストセキュリティ下での全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 7)],
-            "is_highlighted": True,
-        },
-    },
-}
-
-MAX_SPLIT_CAPACITY_PAYLOADS: dict[str, dict[str, Any]] = {
-    **MAX_CAPACITY_PAYLOADS,
-    "CORE-10": {
-        "headers": [f"評価指標 {c}" for c in range(1, 5)],
-        "rows": [[f"データ {r}-{c}" for c in range(1, 5)] for r in range(1, 9)],  # Max 8 rows in split
-        "highlight_row_index": 0,
-    },
-    "CORE-20": {
-        "steps": [
-            {
-                "step_number": i,
-                "title": f"工程 {i}: 基盤構築",
-                "description": f"マイクロサービス第{i}群の自動デプロイ",
-            }
-            for i in range(1, 5)  # Max 4 steps in split
-        ]
-    },
-    "CORE-70": {
-        "left_column": {
-            "header": "現状課題 (As-Is)",
-            "sub_header": "サイロ化された個別最適",
-            "points": [f"部門間データ連携が手動バッチに依存 (課題{i})" for i in range(1, 5)],  # Max 4 pts in split
-            "is_highlighted": False,
-        },
-        "right_column": {
-            "header": "理想姿 (To-Be)",
-            "sub_header": "リアルタイム統合基盤",
-            "points": [f"全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 5)],  # Max 4 pts in split
-            "is_highlighted": True,
-        },
-    },
-}
-
 
 def _independent_paragraph_height_pt(paragraph: Any, avail_width_pt: float) -> float:
     """Independently compute physical height of a paragraph without calling FontEngine."""
@@ -708,16 +585,17 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
 
     @pytest.mark.parametrize(
         "template_id",
-        ["CORE-01", "CORE-02", "CORE-10", "CORE-20", "CORE-30", "CORE-40", "CORE-50", "CORE-60", "CORE-70"],
+        [tid for tid in TEMPLATE_REGISTRY if tid != "CORE-00"],
     )
     def test_single_pane_max_capacity_stress(self, template_id: str) -> None:
-        """Every template at maximum schema capacity must fit physically without overflow or collapse."""
+        """Every registered template at maximum schema capacity must fit physically without overflow or collapse."""
+        spec = TEMPLATE_REGISTRY[template_id]
         slide_def = SlideDefinition.model_validate({
             "template_id": template_id,
             "title": f"最大容量ストレステスト: {template_id}",
             "subtitle": "MAX CAPACITY VERIFICATION",
             "lead_text": None if template_id == "CORE-01" else "スキーマ上限の要素数および日本語長文テキスト投入検証。",
-            "payload": MAX_CAPACITY_PAYLOADS[template_id],
+            "payload": spec.sample_payload,
         })
         deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
         prs, summary = generate_presentation(deck)
@@ -735,30 +613,40 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
             )
 
     @pytest.mark.parametrize(
-        "left_id,right_id,split_ratio",
+        "template_id,is_left",
         [
-            ("CORE-20", "CORE-60", 0.3),   # Compact process in 30% + 4 KPIs in 70%
-            ("CORE-60", "CORE-20", 0.7),   # 4 KPIs in 70% + Compact process in 30%
-            ("CORE-70", "CORE-10", 0.35),  # Vertical stacked comparison in 35% + 8-row table in 65%
-            ("CORE-10", "CORE-40", 0.5),   # 8x4 Table + 2x2 Matrix at 50/50 split
-            ("CORE-40", "CORE-70", 0.45),  # 2x2 Matrix in 45% + Comparison in 55%
-            ("CORE-30", "CORE-50", 0.5),   # Native Chart + Visual Guide Frame
+            (tid, is_left)
+            for tid, spec in TEMPLATE_REGISTRY.items()
+            if spec.supports_split
+            for is_left in (True, False)
         ],
     )
-    def test_extreme_split_max_capacity_invariants(
+    def test_split_max_capacity_invariants(
         self,
-        left_id: str,
-        right_id: str,
-        split_ratio: float,
+        template_id: str,
+        is_left: bool,
     ) -> None:
-        """Max-capacity payloads in extreme split ratios must adapt layout and pass all physical checks."""
+        """All split-capable templates must adapt layout and pass physical checks in narrow and wide panes."""
+        target_spec = TEMPLATE_REGISTRY[template_id]
+        partner_id = "CORE-50" if template_id != "CORE-50" else "CORE-60"
+        partner_spec = TEMPLATE_REGISTRY[partner_id]
+
+        if is_left:
+            left_id, left_payload = template_id, target_spec.effective_split_payload
+            right_id, right_payload = partner_id, partner_spec.effective_split_payload
+            split_ratio = 0.30
+        else:
+            left_id, left_payload = partner_id, partner_spec.effective_split_payload
+            right_id, right_payload = template_id, target_spec.effective_split_payload
+            split_ratio = 0.70
+
         slide_def = SlideDefinition.model_validate({
             "template_id": left_id,
             "title": f"極限スプリット検証: {left_id} + {right_id} ({split_ratio})",
             "lead_text": "狭小ペインにおけるグリッド・スタック自動切替およびフォント縮小の物理境界検証。",
-            "payload": MAX_SPLIT_CAPACITY_PAYLOADS[left_id],
+            "payload": left_payload,
             "right_template_id": right_id,
-            "right_payload": MAX_SPLIT_CAPACITY_PAYLOADS[right_id],
+            "right_payload": right_payload,
             "split_ratio": split_ratio,
         })
         deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])

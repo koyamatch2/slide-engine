@@ -26,6 +26,10 @@ class BasePayload(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, validate_assignment=True)
 
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Validate payload density when rendered in a split pane. Default: no restriction."""
+        return
+
 
 # ----------------------------------------------------------------------
 # Template Payload Definitions (CORE-00 to CORE-70)
@@ -71,6 +75,19 @@ class Core10Payload(BasePayload):
     rows: list[list[SafeText]] = Field(min_length=1, max_length=15)
     highlight_row_index: int | None = Field(default=None, ge=0)
 
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Enforce row and column limits for split layout."""
+        if len(self.rows) > 8:
+            raise ValueError(
+                f"{pane_name} table '{template_id}' in split layout exceeds legibility limit: "
+                f"{len(self.rows)} rows > 8 rows maximum."
+            )
+        if len(self.headers) > 4:
+            raise ValueError(
+                f"{pane_name} table '{template_id}' in split layout exceeds legibility limit: "
+                f"{len(self.headers)} columns > 4 columns maximum."
+            )
+
 
 class ProcessStep(BasePayload):
     """Step definition for Process Flow."""
@@ -84,6 +101,14 @@ class Core20Payload(BasePayload):
     """Payload for Process Flow slide (CORE-20)."""
 
     steps: list[ProcessStep] = Field(min_length=2, max_length=6)
+
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Enforce step count limits for split layout."""
+        if len(self.steps) > 4:
+            raise ValueError(
+                f"{pane_name} process flow '{template_id}' in split layout exceeds legibility limit: "
+                f"{len(self.steps)} steps > 4 steps maximum."
+            )
 
 
 class ChartSeries(BasePayload):
@@ -175,6 +200,15 @@ class Core70Payload(BasePayload):
     left_column: ComparisonColumn
     right_column: ComparisonColumn
 
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Enforce point count limits for split layout."""
+        max_pts = max(len(self.left_column.points), len(self.right_column.points))
+        if max_pts > 4:
+            raise ValueError(
+                f"{pane_name} comparison '{template_id}' in split layout exceeds legibility limit: "
+                f"{max_pts} points > 4 points maximum."
+            )
+
 
 # ----------------------------------------------------------------------
 # Template Registry Mapping
@@ -187,19 +221,221 @@ class TemplateSpec(BasePayload):
     payload_type: type[BasePayload]
     supports_split: bool
     description: str
+    sample_payload: dict[str, Any]
+    split_sample_payload: dict[str, Any] | None = None
+
+    @property
+    def effective_split_payload(self) -> dict[str, Any]:
+        """Return split-optimized payload, or default sample_payload if none specified."""
+        return self.split_sample_payload if self.split_sample_payload is not None else self.sample_payload
+
+
+_SAMPLE_CORE00: dict[str, Any] = {
+    "error_title": "システムエラー",
+    "error_message": "スライドレンダリング処理中に例外が発生しました。",
+    "raw_payload_dump": "{}",
+}
+
+_SAMPLE_CORE01: dict[str, Any] = {
+    "title": "次世代エンタープライズ統合データプラットフォーム刷新計画および移行戦略ロードマップ策定",
+    "subtitle": "2026年度〜2028年度 中期経営計画における基幹系データベースとデータレイクハウスの完全統合アーキテクチャ設計書",
+    "presenter": "デジタル変革推進本部 エンタープライズアーキテクチャグループ",
+    "date_str": "2026年11月1日 (最終版)",
+}
+
+_SAMPLE_CORE02: dict[str, Any] = {
+    "items": [
+        {
+            "number": f"0{i}",
+            "title": f"戦略フェーズ {i}: 全社データ基盤の統合とガバナンス強化",
+            "description": "レガシーシステムの段階的廃止とクラウドネイティブ基盤への完全移行",
+            "is_active": i == 1,
+        }
+        for i in range(1, 9)
+    ]
+}
+
+_SAMPLE_CORE10: dict[str, Any] = {
+    "headers": [f"評価指標項目 {c}" for c in range(1, 6)],
+    "rows": [[f"データ値 {r}-{c} (検証済)" for c in range(1, 6)] for r in range(1, 16)],
+    "highlight_row_index": 0,
+}
+
+_SAMPLE_CORE10_SPLIT: dict[str, Any] = {
+    "headers": [f"評価指標 {c}" for c in range(1, 5)],
+    "rows": [[f"データ {r}-{c}" for c in range(1, 5)] for r in range(1, 9)],
+    "highlight_row_index": 0,
+}
+
+_SAMPLE_CORE20: dict[str, Any] = {
+    "steps": [
+        {
+            "step_number": i,
+            "title": f"工程 {i}: 基盤構築",
+            "description": f"マイクロサービス第{i}群の自動デプロイと統合監視の確立",
+        }
+        for i in range(1, 7)
+    ]
+}
+
+_SAMPLE_CORE20_SPLIT: dict[str, Any] = {
+    "steps": [
+        {
+            "step_number": i,
+            "title": f"工程 {i}: 基盤構築",
+            "description": f"マイクロサービス第{i}群の自動デプロイ",
+        }
+        for i in range(1, 5)
+    ]
+}
+
+_SAMPLE_CORE30: dict[str, Any] = {
+    "chart_type": "column",
+    "categories": [f"Q{q}" for q in range(1, 9)],
+    "series": [
+        {"name": f"事業部 {s}", "values": [float(s * 10 + q) for q in range(1, 9)]}
+        for s in range(1, 5)
+    ],
+}
+
+_SAMPLE_CORE40: dict[str, Any] = {
+    "x_axis_label": "業務定着コスト・移行難易度",
+    "y_axis_label": "全社財務インパクト・戦略貢献度",
+    "top_left": {
+        "title": "重点投資領域",
+        "badge": "P1",
+        "description": "中長期的な競争優位性を確立するための次世代AIプラットフォーム投資。",
+    },
+    "top_right": {
+        "title": "最優先推進（コア）",
+        "badge": "P0",
+        "description": "直ちに全社展開し収益拡大を牽引するミッションクリティカル施策。",
+    },
+    "bottom_left": {
+        "title": "段階的縮退・廃止",
+        "badge": "P3",
+        "description": "保守コストが高止まりしている老朽化オンプレミス資産の計画的廃棄。",
+    },
+    "bottom_right": {
+        "title": "クイックウィン",
+        "badge": "P2",
+        "description": "既存業務プロセスの自動化により短期で投資回収が可能な改善施策。",
+    },
+}
+
+_SAMPLE_CORE50: dict[str, Any] = {
+    "placeholder_label": "ハイブリッドクラウド冗長化構成および閉域網ネットワークトポロジー図",
+    "caption": "図1: 東西リージョン間でのアクティブ・アクティブ構成と自動フェイルオーバー経路の定義",
+}
+
+_SAMPLE_CORE60: dict[str, Any] = {
+    "metrics": [
+        {
+            "label": f"重要業績評価指標 {i}",
+            "value": f"{i * 128.5}",
+            "unit": "億円",
+            "trend": f"前年同期比 +{i * 6.4}% 達成",
+            "is_positive": True,
+        }
+        for i in range(1, 5)
+    ]
+}
+
+_SAMPLE_CORE70: dict[str, Any] = {
+    "left_column": {
+        "header": "現状課題 (As-Is)",
+        "sub_header": "サイロ化された個別最適システム",
+        "points": [f"部門間でのデータ連携が手動バッチに依存し遅延が発生 (課題{i})" for i in range(1, 7)],
+        "is_highlighted": False,
+    },
+    "right_column": {
+        "header": "理想姿 (To-Be)",
+        "sub_header": "イベント駆動型リアルタイム統合基盤",
+        "points": [f"ゼロトラストセキュリティ下での全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 7)],
+        "is_highlighted": True,
+    },
+}
+
+_SAMPLE_CORE70_SPLIT: dict[str, Any] = {
+    "left_column": {
+        "header": "現状課題 (As-Is)",
+        "sub_header": "サイロ化された個別最適",
+        "points": [f"部門間データ連携が手動バッチに依存 (課題{i})" for i in range(1, 5)],
+        "is_highlighted": False,
+    },
+    "right_column": {
+        "header": "理想姿 (To-Be)",
+        "sub_header": "リアルタイム統合基盤",
+        "points": [f"全社リアルタイムAPI連携の実現 (施策{i})" for i in range(1, 5)],
+        "is_highlighted": True,
+    },
+}
 
 
 TEMPLATE_REGISTRY: dict[str, TemplateSpec] = {
-    "CORE-00": TemplateSpec(payload_type=Core00Payload, supports_split=False, description="System Fallback"),
-    "CORE-01": TemplateSpec(payload_type=Core01Payload, supports_split=False, description="Cover Slide"),
-    "CORE-02": TemplateSpec(payload_type=Core02Payload, supports_split=False, description="Agenda / Section"),
-    "CORE-10": TemplateSpec(payload_type=Core10Payload, supports_split=True, description="Data Table"),
-    "CORE-20": TemplateSpec(payload_type=Core20Payload, supports_split=True, description="Process Flow"),
-    "CORE-30": TemplateSpec(payload_type=Core30Payload, supports_split=True, description="Native Chart"),
-    "CORE-40": TemplateSpec(payload_type=Core40Payload, supports_split=True, description="2x2 Matrix"),
-    "CORE-50": TemplateSpec(payload_type=Core50Payload, supports_split=True, description="Visual Guide Frame"),
-    "CORE-60": TemplateSpec(payload_type=Core60Payload, supports_split=True, description="KPI Summary Cards"),
-    "CORE-70": TemplateSpec(payload_type=Core70Payload, supports_split=True, description="Comparison Box"),
+    "CORE-00": TemplateSpec(
+        payload_type=Core00Payload,
+        supports_split=False,
+        description="System Fallback",
+        sample_payload=_SAMPLE_CORE00,
+    ),
+    "CORE-01": TemplateSpec(
+        payload_type=Core01Payload,
+        supports_split=False,
+        description="Cover Slide",
+        sample_payload=_SAMPLE_CORE01,
+    ),
+    "CORE-02": TemplateSpec(
+        payload_type=Core02Payload,
+        supports_split=False,
+        description="Agenda / Section",
+        sample_payload=_SAMPLE_CORE02,
+    ),
+    "CORE-10": TemplateSpec(
+        payload_type=Core10Payload,
+        supports_split=True,
+        description="Data Table",
+        sample_payload=_SAMPLE_CORE10,
+        split_sample_payload=_SAMPLE_CORE10_SPLIT,
+    ),
+    "CORE-20": TemplateSpec(
+        payload_type=Core20Payload,
+        supports_split=True,
+        description="Process Flow",
+        sample_payload=_SAMPLE_CORE20,
+        split_sample_payload=_SAMPLE_CORE20_SPLIT,
+    ),
+    "CORE-30": TemplateSpec(
+        payload_type=Core30Payload,
+        supports_split=True,
+        description="Native Chart",
+        sample_payload=_SAMPLE_CORE30,
+    ),
+    "CORE-40": TemplateSpec(
+        payload_type=Core40Payload,
+        supports_split=True,
+        description="2x2 Matrix",
+        sample_payload=_SAMPLE_CORE40,
+    ),
+    "CORE-50": TemplateSpec(
+        payload_type=Core50Payload,
+        supports_split=True,
+        description="Visual Guide Frame",
+        sample_payload=_SAMPLE_CORE50,
+    ),
+    "CORE-60": TemplateSpec(
+        payload_type=Core60Payload,
+        supports_split=True,
+        description="KPI Summary Cards",
+        sample_payload=_SAMPLE_CORE60,
+    ),
+    "CORE-70": TemplateSpec(
+        payload_type=Core70Payload,
+        supports_split=True,
+        description="Comparison Box",
+        sample_payload=_SAMPLE_CORE70,
+        split_sample_payload=_SAMPLE_CORE70_SPLIT,
+    ),
 }
 
 
@@ -229,46 +465,6 @@ def _validate_single_pane(template_id: str, payload_data: Any, is_right: bool = 
     if isinstance(payload_data, spec.payload_type):
         return payload_data
     return spec.payload_type.model_validate(payload_data)
-
-
-def _check_core10_density(payload: Core10Payload, pane: str, tid: str) -> None:
-    if len(payload.rows) > 8:
-        raise ValueError(
-            f"{pane} table '{tid}' in split layout exceeds legibility limit: "
-            f"{len(payload.rows)} rows > 8 rows maximum."
-        )
-    if len(payload.headers) > 4:
-        raise ValueError(
-            f"{pane} table '{tid}' in split layout exceeds legibility limit: "
-            f"{len(payload.headers)} columns > 4 columns maximum."
-        )
-
-
-def _check_core20_density(payload: Core20Payload, pane: str, tid: str) -> None:
-    if len(payload.steps) > 4:
-        raise ValueError(
-            f"{pane} process flow '{tid}' in split layout exceeds legibility limit: "
-            f"{len(payload.steps)} steps > 4 steps maximum."
-        )
-
-
-def _check_core70_density(payload: Core70Payload, pane: str, tid: str) -> None:
-    max_pts = max(len(payload.left_column.points), len(payload.right_column.points))
-    if max_pts > 4:
-        raise ValueError(
-            f"{pane} comparison '{tid}' in split layout exceeds legibility limit: "
-            f"{max_pts} points > 4 points maximum."
-        )
-
-
-def _validate_split_pane_density(template_id: str, payload: BasePayload, pane_name: str) -> None:
-    """Enforce physical legibility ceilings when a template is rendered inside a split pane."""
-    if isinstance(payload, Core10Payload):
-        _check_core10_density(payload, pane_name, template_id)
-    elif isinstance(payload, Core20Payload):
-        _check_core20_density(payload, pane_name, template_id)
-    elif isinstance(payload, Core70Payload):
-        _check_core70_density(payload, pane_name, template_id)
 
 
 class SlideDefinition(BaseModel):
@@ -312,9 +508,9 @@ class SlideDefinition(BaseModel):
         object.__setattr__(self, "right_template_id", effective_right_id)
         object.__setattr__(self, "right_payload", right_obj)
 
-        # 5. Enforce split pane physical density constraints
-        _validate_split_pane_density(self.template_id, left_obj, "Left")
-        _validate_split_pane_density(effective_right_id, right_obj, "Right")
+        # 5. Enforce split pane physical density constraints via polymorphic payload methods
+        left_obj.validate_split_density("Left", self.template_id)
+        right_obj.validate_split_density("Right", effective_right_id)
         return self
 
 
