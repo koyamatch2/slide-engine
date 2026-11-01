@@ -6,10 +6,11 @@ distinct card backgrounds, and category badges.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
+from pydantic import StringConstraints
 
 from slide_engine.core_base import (
     BoundingBox,
@@ -23,24 +24,37 @@ from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 if TYPE_CHECKING:
     from pptx.slide import Slide
 
+AxisLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)]
+BadgeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=20)]
+
 
 class MatrixQuadrant(BasePayload):
     """Quadrant definition for 2x2 Matrix."""
 
     title: ShortText
     description: SafeText
-    badge: ShortText | None = None
+    badge: BadgeText | None = None
 
 
 class Core40Payload(BasePayload):
     """Payload for 2x2 Matrix slide (CORE-40)."""
 
-    x_axis_label: ShortText
-    y_axis_label: ShortText
+    x_axis_label: AxisLabel
+    y_axis_label: AxisLabel
     top_left: MatrixQuadrant
     top_right: MatrixQuadrant
     bottom_left: MatrixQuadrant
     bottom_right: MatrixQuadrant
+
+    def validate_split_density(self, pane_name: str, template_id: str) -> None:
+        """Enforce character limits for split layout."""
+        quadrants = [self.top_left, self.top_right, self.bottom_left, self.bottom_right]
+        for q_name, quad in zip(["TL", "TR", "BL", "BR"], quadrants, strict=True):
+            if len(quad.description) > 100:
+                raise ValueError(
+                    f"{pane_name} matrix '{template_id}' quadrant {q_name} in split layout exceeds "
+                    f"density limit: {len(quad.description)} chars > 100 chars maximum."
+                )
 
 
 _SAMPLE_CORE40: dict[str, Any] = {
@@ -70,6 +84,7 @@ _SAMPLE_CORE40: dict[str, Any] = {
 
 _INVALID_SAMPLES_CORE40: list[dict[str, Any]] = [
     {"x_axis_label": "X"},  # Missing required quadrant fields
+    {"x_axis_label": "A" * 60, "y_axis_label": "B"},  # Axis label exceeds limit
 ]
 
 SPEC = TemplateSpec(
@@ -111,7 +126,7 @@ def _render_quadrant_card(
                 text=header_text,
                 weight=0.35,
                 max_pt=12.5,
-                min_pt=8.5,
+                min_pt=8.0,
                 color_key="primary",
                 bold=True,
                 space_after_pt=4.0,

@@ -6,23 +6,26 @@ bypassing the limitations of native OpenXML waterfall support.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster, clamp_length
-from slide_engine.models import BasePayload, ShortText, TemplateSpec
+from slide_engine.models import BasePayload, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
+
+StepLabel = Annotated[str, StringConstraints(strip_whitespace=True, max_length=20)]
+StepUnit = Annotated[str, StringConstraints(strip_whitespace=True, max_length=10)]
 
 
 class WaterfallStep(BasePayload):
     """Single step in a Waterfall Chart."""
 
-    label: ShortText
+    label: StepLabel
     value: float
     is_total: bool = False
 
@@ -30,7 +33,7 @@ class WaterfallStep(BasePayload):
 class Core80Payload(BasePayload):
     """Payload for Waterfall Chart slide (CORE-80)."""
 
-    unit: ShortText | None = None
+    unit: StepUnit | None = None
     steps: list[WaterfallStep] = Field(min_length=2, max_length=8)
 
     def validate_split_density(self, pane_name: str, template_id: str) -> None:
@@ -69,6 +72,7 @@ _SAMPLE_CORE80_SPLIT: dict[str, Any] = {
 
 _INVALID_SAMPLES_CORE80: list[dict[str, Any]] = [
     {"steps": [{"label": "S", "value": 10.0}]},  # Violates min_length=2
+    {"steps": [{"label": "長大ラベル" * 10, "value": 10.0}, {"label": "S2", "value": 20.0}]},  # Label exceeds 20 chars
 ]
 
 SPEC = TemplateSpec(
@@ -85,7 +89,10 @@ GAP_X = Inches(0.180)
 VAL_H = Inches(0.350)
 LABEL_H = Inches(0.450)
 MIN_BAR_H = Inches(0.200)
-MIN_BAR_W = Inches(0.350)
+CHART_GAP_Y = Inches(0.080)
+MIN_USABLE_H = Inches(1.000)
+MIN_AVAIL_BAR_SPACE = Inches(0.500)
+MAX_GAP_X_RATIO = 0.03
 CONNECTOR_THICKNESS = Inches(0.020)
 
 
@@ -208,18 +215,17 @@ def render_core_80(slide: Slide, payload: Core80Payload, box: BoundingBox) -> No
     spans, max_v, min_v = _calculate_spans(payload.steps)
 
     lbl_top = Length(box.bottom - LABEL_H)
-    gap_y = Inches(0.080)
     chart_area_top = Length(box.top + VAL_H)
-    chart_area_bottom = Length(lbl_top - VAL_H - gap_y)
-    usable_h = clamp_length(chart_area_bottom - chart_area_top, min_val=Inches(1.000))
+    chart_area_bottom = Length(lbl_top - VAL_H - CHART_GAP_Y)
+    usable_h = clamp_length(chart_area_bottom - chart_area_top, min_val=MIN_USABLE_H)
 
     val_range = max_v - min_v
     scale = float(usable_h / val_range) if val_range > 0 else 1.0
 
     num_steps = len(payload.steps)
-    gap_x = clamp_length(GAP_X, max_val=box.width * 0.03)
+    gap_x = clamp_length(GAP_X, max_val=box.width * MAX_GAP_X_RATIO)
     total_gap = Length(int(gap_x * (num_steps - 1)))
-    avail_bar_space = clamp_length(box.width - total_gap, min_val=Inches(0.500))
+    avail_bar_space = clamp_length(box.width - total_gap, min_val=MIN_AVAIL_BAR_SPACE)
     bar_w = Length(int(avail_bar_space / num_steps))
 
     curr_x = box.left

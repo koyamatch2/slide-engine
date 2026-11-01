@@ -33,7 +33,7 @@ _SAMPLE_CORE01: dict[str, Any] = {
 }
 
 _INVALID_SAMPLES_CORE01: list[dict[str, Any]] = [
-    {"title": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN (120)
+    {"title": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN
 ]
 
 SPEC = TemplateSpec(
@@ -51,7 +51,7 @@ SPEC = TemplateSpec(
 COVER_LEFT = Inches(1.200)
 COVER_TOP = Inches(2.200)
 COVER_WIDTH = Inches(10.933)
-COVER_HEIGHT = Inches(2.400)
+COVER_HEIGHT = Inches(2.550)
 
 META_OFFSET_TOP = Inches(4.900)
 META_HEIGHT = Inches(1.200)
@@ -80,7 +80,7 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
                 text=payload.title,
                 weight=0.55,
                 max_pt=32.0,
-                min_pt=18.0,
+                min_pt=16.0,
                 color_key="primary",
                 bold=True,
                 space_after_pt=14.0,
@@ -89,7 +89,7 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
                 text=payload.subtitle,
                 weight=0.35,
                 max_pt=16.0,
-                min_pt=10.0,
+                min_pt=9.5,
                 color_key="secondary",
             ),
         ],

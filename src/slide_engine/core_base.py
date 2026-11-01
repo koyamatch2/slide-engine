@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -399,6 +400,78 @@ class FontEngine:
                 lines += max(1, math.ceil(eff_em / avail_em))
         return lines
 
+    @classmethod
+    def estimate_text_lines(cls, text: str, width: Length, font_pt: float) -> int:
+        """Estimate lines required to wrap text within available width at given font size."""
+        if not text:
+            return 0
+        paragraphs = text.split("\n")
+        para_specs = [(cls._effective_text_em_width(p) if p else 0.0, bool(p)) for p in paragraphs]
+        avail_em = max(1.0, width.pt / max(1.0, font_pt))
+        return cls._estimate_line_count(para_specs, avail_em)
+
+
+def _compute_spec_min_lines(spec: ParagraphSpec, width: Length) -> int:
+    """Calculate minimum line count for a paragraph spec using its min_pt."""
+    if not spec.text or not spec.text.strip():
+        return 0
+    return max(1, FontEngine.estimate_text_lines(spec.text, width, spec.min_pt))
+
+
+def _resolve_stack_spaces(
+    specs: Sequence[ParagraphSpec],
+    avail_h_pt: float,
+    min_heights: list[float],
+) -> list[float]:
+    """Dynamically compress paragraph space_after values when vertical space is constrained."""
+    num_specs = len(specs)
+    raw_spaces = [
+        (spec.space_after_pt or 0.0) if idx < num_specs - 1 else 0.0
+        for idx, spec in enumerate(specs)
+    ]
+    total_req_space = sum(raw_spaces)
+    if total_req_space <= 0.0:
+        return raw_spaces
+
+    total_min_text = sum(min_heights)
+    available_for_space = max(0.0, avail_h_pt - total_min_text)
+    factor = min(1.0, available_for_space / total_req_space)
+    return [s * factor for s in raw_spaces]
+
+
+def _allocate_stack_budgets(
+    specs: Sequence[ParagraphSpec],
+    width: Length,
+    height: Length,
+) -> list[tuple[Length, float]]:
+    """Allocate optimal height budgets and space_after_pt for each paragraph in a stack.
+
+    Returns:
+        List of tuples: (budget_h, effective_space_after_pt).
+    """
+    total_weight = sum(s.weight for s in specs)
+    if total_weight <= 0:
+        total_weight = float(len(specs))
+
+    avail_h_pt = height.pt
+    min_heights = [
+        _compute_spec_min_lines(spec, width) * spec.min_pt * 1.3
+        for spec in specs
+    ]
+    eff_spaces = _resolve_stack_spaces(specs, avail_h_pt, min_heights)
+
+    base_heights = [h + s for h, s in zip(min_heights, eff_spaces, strict=True)]
+    total_base = sum(base_heights)
+    slack_pt = max(0.0, avail_h_pt - total_base)
+
+    results: list[tuple[Length, float]] = []
+    for idx, spec in enumerate(specs):
+        ratio = spec.weight / total_weight
+        budget_pt = base_heights[idx] + (slack_pt * ratio)
+        results.append((FontEngine.pt(budget_pt), eff_spaces[idx]))
+
+    return results
+
 
 class ShapeBuilder:
     """Helper methods for constructing PowerPoint shapes, borders, and text boxes."""
@@ -650,13 +723,11 @@ class ShapeBuilder:
         if not valid_specs:
             return
 
-        total_weight = sum(s.weight for s in valid_specs)
-        if total_weight <= 0:
-            total_weight = float(len(valid_specs))
+        budgets_and_spaces = _allocate_stack_budgets(valid_specs, width, height)
 
-        for idx, spec in enumerate(valid_specs):
-            ratio = spec.weight / total_weight
-            budget_h = Length(max(int(FontEngine.pt(spec.min_pt)), int(height * ratio)))
+        for idx, (spec, (budget_h, eff_space_pt)) in enumerate(
+            zip(valid_specs, budgets_and_spaces, strict=True)
+        ):
             cls.add_styled_paragraph(
                 tf,
                 spec.text,  # type: ignore[arg-type]
@@ -668,7 +739,7 @@ class ShapeBuilder:
                 bold=spec.bold,
                 alignment=spec.alignment,
                 font_family=spec.font_family,
-                space_after_pt=spec.space_after_pt,
+                space_after_pt=eff_space_pt if eff_space_pt > 0 else None,
                 is_first=(idx == 0),
             )
 

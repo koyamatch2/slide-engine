@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from slide_engine.core_base import (
     BoundingBox,
@@ -39,6 +39,18 @@ class Core02Payload(BasePayload):
 
     items: list[AgendaItem] = Field(min_length=1, max_length=8)
 
+    @model_validator(mode="after")
+    def validate_agenda_density(self) -> Core02Payload:
+        """Validate character density across items to guarantee legibility and physical containment."""
+        if len(self.items) >= 7:
+            for idx, item in enumerate(self.items):
+                if item.description and len(item.description) > 100:
+                    raise ValueError(
+                        f"Agenda item {idx + 1} description exceeds 100 characters ({len(item.description)}) "
+                        f"for dense {len(self.items)}-item agenda."
+                    )
+        return self
+
 
 _SAMPLE_CORE02: dict[str, Any] = {
     "items": [
@@ -54,6 +66,16 @@ _SAMPLE_CORE02: dict[str, Any] = {
 
 _INVALID_SAMPLES_CORE02: list[dict[str, Any]] = [
     {"items": []},  # Violates min_length=1
+    {
+        "items": [
+            {
+                "number": f"0{i}",
+                "title": f"フェーズ {i}",
+                "description": "長文" * 60,  # 120 chars > 100 chars limit for 7+ items
+            }
+            for i in range(1, 8)
+        ]
+    },
 ]
 
 SPEC = TemplateSpec(
@@ -81,10 +103,12 @@ def _render_agenda_row(
     """Render an individual numbered agenda item card."""
     bg_col = SlideMaster.COLORS["primary"] if item.is_active else SlideMaster.COLORS["bg_light"]
     border_col = SlideMaster.COLORS["primary"] if item.is_active else SlideMaster.COLORS["border"]
-    ShapeBuilder.add_card(slide, row_box, bg_color=bg_col, border_color=border_col, border_width_pt=1.0)
+    ShapeBuilder.add_card(
+        slide, row_box, bg_color=bg_col, border_color=border_col, border_width_pt=1.0
+    )
 
     pad_x = clamp_length(PADDING_CONTENT, max_val=row_box.width * 0.05)
-    pad_y = clamp_length(Inches(0.100), max_val=row_box.height * 0.12)
+    pad_y = clamp_length(Inches(0.020), max_val=row_box.height * 0.035)
     badge_h = clamp_length(Inches(0.420), max_val=row_box.height - pad_y * 2)
     badge_w = clamp_length(BADGE_WIDTH, max_val=row_box.width * 0.15)
 
@@ -128,7 +152,7 @@ def _render_agenda_row(
                 text=item.title,
                 weight=0.55,
                 max_pt=14.0,
-                min_pt=9.0,
+                min_pt=8.0,
                 color_key=title_col_key,
                 bold=True,
             ),
@@ -152,7 +176,8 @@ def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> No
         box: Content BoundingBox.
     """
     num_items = len(payload.items)
-    gap = Length(min(int(GAP_BETWEEN_ROWS), int(box.height * 0.03)))
+    max_gap_ratio = 0.008 if num_items >= 7 else (0.015 if num_items >= 5 else 0.03)
+    gap = Length(min(int(GAP_BETWEEN_ROWS), int(box.height * max_gap_ratio)))
     total_gaps = gap * (num_items - 1)
     available_height = box.height - total_gaps
     row_height = Length(int(available_height / num_items))

@@ -66,25 +66,48 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
+from slide_engine.core_base import (
+    BoundingBox,
+    FontEngine,
+    ParagraphSpec,
+    ShapeBuilder,
+    SlideMaster,
+    clamp_length,
+)
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
     from pptx.slide import Slide
 ```
 
-### 3.2 `BoundingBox`（矩形領域クラス）
+### 3.2 `BoundingBox`（幾何領域計算・自動レイアウト）
+手動計算の代わりに、安全なインセットや自動グリッド分割の高水準APIを活用せよ。
 ```python
-# インスタンス生成（必ず Length 型）
-inner_box = BoundingBox(
-    left=Length(box.left + Inches(0.200)),
-    top=Length(box.top + Inches(0.200)),
-    width=Length(box.width - Inches(0.400)),
-    height=Length(box.height - Inches(0.400)),
+# 1. 余白インセット（パディングの自動安全クランプ・比率上限付き）
+inner_box = card_box.inset(
+    pad_x=Inches(0.200),
+    pad_y=Inches(0.160),
+    max_ratio_x=0.08,  # 幅に対するパディング比率上限（狭小ペイン時の潰れ防止）
+    max_ratio_y=0.08,  # 高さに対するパディング比率上限
 )
-# 参照可能な属性:
-# inner_box.left, inner_box.top, inner_box.width, inner_box.height
-# inner_box.right (left + width), inner_box.bottom (top + height)
+
+# 2. アダプティブグリッド（要素数と幅に応じた動的列数・行数決定）
+# 幅が min_col_width を下回ると自動で列落ち（狭小分割レイアウト時は1列化）
+grid_cells = box.adaptive_grid(
+    num_items=len(payload.cards),
+    min_col_width=Inches(3.200),
+    gap_x=Inches(0.240),
+    gap_y=Inches(0.200),
+    balance_rows=True,  # 行ごとの要素数を均等配分（例: 4要素なら2x2）
+)
+
+# 3. 高度・幅の比率スケーリング
+top_h = box.scale_height(0.40)
+bottom_h = box.scale_height(0.60)
+
+# 4. 参照可能なプロパティ:
+# box.left, box.top, box.width, box.height
+# box.right (left + width), box.bottom (top + height)
 ```
 
 ### 3.3 `SlideMaster`（カラーパレット・フォント定数）
@@ -101,23 +124,14 @@ inner_box = BoundingBox(
   * `"bg_light"`: ライトクールグレー（標準カードの塗りつぶし背景）
   * `"bg_white"`: ピュアホワイト（白背景カード）
   * `"border"`: ボーダーグレー（標準カードの枠線）
+  * `"fallback_bg"`: 警告用背景色
+  * `"fallback_text"`: 警告用テキスト色
 
-### 3.4 `FontEngine`（動的フォントサイズ計算）
-```python
-fitted_size = FontEngine.calculate_font_size(
-    text=item.description,
-    box_width=content_box.width,
-    box_height=content_box.height,
-    max_pt=12.0,
-    min_pt=8.0,  # 8.0pt 未満は可読性違反でテスト失敗
-)
-p.font.size = fitted_size
-```
-
-### 3.5 `ShapeBuilder`（図形・テキストボックス生成）
+### 3.4 `ShapeBuilder` と `ParagraphSpec`（推奨：高水準描画API）
+複数段落のフォントサイズ動的縮小・テキストボックス生成は、`ParagraphSpec` の宣言的スタックで一括描画せよ。
 ```python
 # 1. カード図形の追加 (位置引数で slide, box を渡す)
-shape = ShapeBuilder.add_card(
+ShapeBuilder.add_card(
     slide,
     card_box,
     bg_color=SlideMaster.COLORS["bg_light"],   # None で背景透明
@@ -125,17 +139,77 @@ shape = ShapeBuilder.add_card(
     border_width_pt=1.0,
 )
 
-# 2. テキストボックスの追加 (margin_zero=True でパディング排除)
+# 2. 宣言的段落スタックの追加 (weight で高さを垂直配分し、自動フォント調整)
+ShapeBuilder.add_styled_paragraph_stack(
+    slide,
+    inner_box,
+    [
+        ParagraphSpec(
+            text="見出しタイトル",
+            weight=0.40,             # 垂直方向の高さ割当比率
+            max_pt=13.0,             # 最大フォントサイズ
+            min_pt=8.0,              # 最小フォントサイズ下限（可読性不変量）
+            color_key="primary",     # SlideMaster.COLORS のキー
+            bold=True,
+            space_after_pt=4.0,      # 段落後余白
+        ),
+        ParagraphSpec(
+            text="詳細説明文テキスト。動的に安全縮小されテキストボックス内に収容。",
+            weight=0.55,
+            max_pt=10.0,
+            min_pt=8.0,
+            color_key="text_dark",
+        ),
+    ],
+)
+
+# 3. 単一テキストボックスの即時描画（バッジ、キャプション、単独ラベル等）
+ShapeBuilder.add_styled_textbox(
+    slide,
+    badge_box,
+    "[STEP 01]",
+    max_pt=10.5,
+    min_pt=8.0,
+    color_key="secondary",
+    bold=True,
+    alignment=PP_ALIGN.CENTER,
+)
+```
+
+### 3.5 低水準API・特殊装飾（KPI等の混在Run用）
+単一の段落内でフォント・色・サイズが混在する場合（例: KPIの巨大数値＋小さな単位）のみ、低水準APIを使用せよ。
+```python
+# テキストボックスを直接追加
 tb = ShapeBuilder.add_textbox(slide, text_box, margin_zero=True)
 tf = tb.text_frame
 
-p_title = tf.paragraphs[0]
-p_title.text = "見出しタイトル"
-p_title.alignment = PP_ALIGN.LEFT
-p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-p_title.font.size = FontEngine.pt(13.0)
-p_title.font.bold = True
-p_title.font.color.rgb = SlideMaster.COLORS["primary"]
+# 手動での動的フォント計算
+fitted_size = FontEngine.calculate_font_size(
+    text="1,250",
+    box_width=text_box.width,
+    box_height=text_box.height,
+    max_pt=36.0,
+    min_pt=12.0,
+)
+p = tf.paragraphs[0]
+p.text = "1,250"
+p.font.name = SlideMaster.FONT_FAMILY_SECONDARY
+p.font.size = fitted_size
+p.font.bold = True
+p.font.color.rgb = SlideMaster.COLORS["primary"]
+
+# 単位などの別 Run 追加
+run_unit = p.add_run()
+run_unit.text = " 億円"
+run_unit.font.name = SlideMaster.FONT_FAMILY_PRIMARY
+run_unit.font.size = FontEngine.pt(14.0)
+run_unit.font.color.rgb = SlideMaster.COLORS["secondary"]
+```
+
+### 3.6 幾何ユーティリティ
+```python
+# 座標・寸法の境界クランプ（負値や過大寸法の防止）
+safe_w = clamp_length(box.width - gap, min_val=Inches(0.500), max_val=Inches(5.000))
 ```
 
 ---
@@ -171,10 +245,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pptx.util import Inches, Length
+from pptx.util import Inches
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
+from slide_engine.core_base import BoundingBox, ParagraphSpec, ShapeBuilder, SlideMaster
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -246,7 +320,7 @@ SPEC = TemplateSpec(
 )
 
 # Local Geometry Constants
-GRID_COLS = 2
+GRID_MIN_COL_WIDTH = Inches(3.200)
 GAP_X = Inches(0.240)
 GAP_Y = Inches(0.200)
 CARD_PAD_X = Inches(0.200)
@@ -267,42 +341,34 @@ def _render_single_card(slide: Slide, item: GridCardItem, card_box: BoundingBox)
         border_width_pt=border_pt,
     )
 
-    inner_box = BoundingBox(
-        left=Length(card_box.left + CARD_PAD_X),
-        top=Length(card_box.top + CARD_PAD_Y),
-        width=Length(card_box.width - (CARD_PAD_X * 2)),
-        height=Length(card_box.height - (CARD_PAD_Y * 2)),
-    )
-    tb = ShapeBuilder.add_textbox(slide, inner_box, margin_zero=True)
-    tf = tb.text_frame
+    inner_box = card_box.inset(CARD_PAD_X, CARD_PAD_Y, max_ratio_x=0.08, max_ratio_y=0.08)
 
-    p_title = tf.paragraphs[0]
     header_prefix = f"[{item.badge}] " if item.badge else ""
     full_title = f"{header_prefix}{item.title}"
-    p_title.text = full_title
-    p_title.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_title.font.size = FontEngine.calculate_font_size(
-        full_title,
-        inner_box.width,
-        Length(int(inner_box.height * 0.40)),
-        max_pt=12.5,
-        min_pt=8.0,
-    )
-    p_title.font.bold = True
-    p_title.font.color.rgb = SlideMaster.COLORS["accent"] if item.is_highlighted else SlideMaster.COLORS["primary"]
-    p_title.space_after = FontEngine.pt(4.0)
+    title_col = "accent" if item.is_highlighted else "primary"
 
-    p_desc = tf.add_paragraph()
-    p_desc.text = item.description
-    p_desc.font.name = SlideMaster.FONT_FAMILY_PRIMARY
-    p_desc.font.size = FontEngine.calculate_font_size(
-        item.description,
-        inner_box.width,
-        Length(int(inner_box.height * 0.55)),
-        max_pt=10.0,
-        min_pt=8.0,
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        inner_box,
+        [
+            ParagraphSpec(
+                text=full_title,
+                weight=0.40,
+                max_pt=12.5,
+                min_pt=8.0,
+                color_key=title_col,
+                bold=True,
+                space_after_pt=4.0,
+            ),
+            ParagraphSpec(
+                text=item.description,
+                weight=0.55,
+                max_pt=10.0,
+                min_pt=8.0,
+                color_key="text_dark",
+            ),
+        ],
     )
-    p_desc.font.color.rgb = SlideMaster.COLORS["text_dark"]
 
 
 def render_core_90(slide: Slide, payload: Core90Payload, box: BoundingBox) -> None:
@@ -313,22 +379,15 @@ def render_core_90(slide: Slide, payload: Core90Payload, box: BoundingBox) -> No
         payload: Core90Payload instance.
         box: Content BoundingBox.
     """
-    num_cards = len(payload.cards)
-    cols = 1 if box.width < Inches(4.500) else GRID_COLS
-    rows = (num_cards + cols - 1) // cols
-
-    total_gap_x = Length(int(GAP_X * (cols - 1)))
-    total_gap_y = Length(int(GAP_Y * (rows - 1)))
-    card_w = Length(int((box.width - total_gap_x) / cols))
-    card_h = Length(int((box.height - total_gap_y) / rows))
-
-    for idx, item in enumerate(payload.cards):
-        r_idx = idx // cols
-        c_idx = idx % cols
-        c_left = Length(box.left + c_idx * (card_w + GAP_X))
-        c_top = Length(box.top + r_idx * (card_h + GAP_Y))
-        card_box = BoundingBox(c_left, c_top, card_w, card_h)
-        _render_single_card(slide, item, card_box)
+    grid = box.adaptive_grid(
+        num_items=len(payload.cards),
+        min_col_width=GRID_MIN_COL_WIDTH,
+        gap_x=GAP_X,
+        gap_y=GAP_Y,
+        balance_rows=True,
+    )
+    for item, cell_box in zip(payload.cards, grid, strict=True):
+        _render_single_card(slide, item, cell_box)
 ```
 
 ---
@@ -340,7 +399,8 @@ def render_core_90(slide: Slide, payload: Core90Payload, box: BoundingBox) -> No
 - [ ] `Inches(box.left + ...)` のような EMU 二重スケーリングを行っていないか？（`Length(int(...))` 必須）
 - [ ] 関数名は `render_core_xx` で、引数名は正確に `(slide: Slide, payload: CoreXXPayload, box: BoundingBox) -> None` となっているか？
 - [ ] McCabe 循環的複雑度が `10` 以下になっているか？
-- [ ] `FontEngine.calculate_font_size` で `min_pt=8.0` を下限に指定しているか？
+- [ ] テキスト描画は `ParagraphSpec` / `add_styled_paragraph_stack` 等の高水準APIを優先し、`min_pt=8.0` を下限に指定しているか？
+- [ ] グリッド配置・余白計算は手動ループではなく `box.adaptive_grid()` や `box.inset()` を活用しているか？
 - [ ] モジュール内に `SPEC = TemplateSpec(...)` を定義し、正しくエクスポートしているか？
 - [ ] サンプルデータ `_SAMPLE_COREXX` にスキーマ上限（`max_length`）要素数を投入しているか？
 - [ ] 境界防御テスト用の `_INVALID_SAMPLES_COREXX` を最低1件定義し、`SPEC` に渡したか？

@@ -50,6 +50,32 @@ def build_dynamic_dispatch_table() -> dict[str, RenderFunction]:
     return dispatch_table
 
 
+def _get_asset_search_dirs() -> list[Path]:
+    """Return ordered list of canonical directory paths to search for assets."""
+    search_dirs: list[Path] = []
+    if "SLIDE_ENGINE_ASSETS_DIR" in os.environ:
+        search_dirs.append(Path(os.environ["SLIDE_ENGINE_ASSETS_DIR"]).resolve())
+    search_dirs.append(Path("/app/assets").resolve())
+    search_dirs.append(Path("assets").resolve())
+    search_dirs.append((Path(__file__).resolve().parent.parent.parent / "assets").resolve())
+    return search_dirs
+
+
+def _resolve_safe_asset_path(theme_name: str) -> Path | None:
+    """Resolve and verify theme asset path ensuring strict containment within asset directories."""
+    filename = f"{theme_name}.pptx"
+    for base_dir in _get_asset_search_dirs():
+        if not base_dir.is_dir():
+            continue
+        try:
+            candidate = (base_dir / filename).resolve()
+            if candidate.is_relative_to(base_dir) and candidate.is_file():
+                return candidate
+        except (ValueError, OSError):
+            continue
+    return None
+
+
 def _initialize_presentation(theme_name: str) -> PresentationType:
     """Initialize Presentation using master assets or clean fallback.
 
@@ -59,19 +85,15 @@ def _initialize_presentation(theme_name: str) -> PresentationType:
     Returns:
         Initialized Presentation object.
     """
-    candidates: list[str] = []
-    if "SLIDE_ENGINE_ASSETS_DIR" in os.environ:
-        candidates.append(os.path.join(os.environ["SLIDE_ENGINE_ASSETS_DIR"], f"{theme_name}.pptx"))
-    candidates.append(os.path.join("/app/assets", f"{theme_name}.pptx"))
-    candidates.append(os.path.join("assets", f"{theme_name}.pptx"))
-    pkg_assets = Path(__file__).resolve().parent.parent.parent / "assets" / f"{theme_name}.pptx"
-    candidates.append(str(pkg_assets))
-
-    for path in candidates:
-        if os.path.exists(path):
-            prs = Presentation(path)
+    safe_path = _resolve_safe_asset_path(theme_name)
+    if safe_path is not None:
+        try:
+            prs = Presentation(str(safe_path))
             ShapeBuilder.purge_existing_slides(prs)
             return prs
+        except Exception:
+            # Fall through to clean blank master on corrupted or invalid asset
+            pass
 
     prs = Presentation()
     prs.slide_width = SlideMaster.SLIDE_WIDTH

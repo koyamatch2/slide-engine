@@ -29,13 +29,20 @@ class Core10Payload(BasePayload):
 
     @model_validator(mode="after")
     def validate_table_integrity(self) -> Core10Payload:
-        """Validate column count consistency across all rows and highlight row index."""
+        """Validate column count consistency, highlight index, and cell density."""
         col_count = len(self.headers)
+        max_cell_len = 45 if len(self.rows) > 8 else 80
         for r_idx, row in enumerate(self.rows):
             if len(row) != col_count:
                 raise ValueError(
                     f"Row {r_idx} column count ({len(row)}) does not match headers count ({col_count})."
                 )
+            for c_idx, cell in enumerate(row):
+                if len(cell) > max_cell_len:
+                    raise ValueError(
+                        f"Cell at row {r_idx}, col {c_idx} exceeds density limit ({len(cell)} > {max_cell_len}) "
+                        f"for {len(self.rows)}-row table."
+                    )
         if self.highlight_row_index is not None and self.highlight_row_index >= len(self.rows):
             raise ValueError(
                 f"highlight_row_index ({self.highlight_row_index}) exceeds total row count ({len(self.rows)})."
@@ -43,7 +50,7 @@ class Core10Payload(BasePayload):
         return self
 
     def validate_split_density(self, pane_name: str, template_id: str) -> None:
-        """Enforce row and column limits for split layout."""
+        """Enforce row, column, and cell character limits for split layout."""
         if len(self.rows) > 8:
             raise ValueError(
                 f"{pane_name} table '{template_id}' in split layout exceeds legibility limit: "
@@ -54,6 +61,13 @@ class Core10Payload(BasePayload):
                 f"{pane_name} table '{template_id}' in split layout exceeds legibility limit: "
                 f"{len(self.headers)} columns > 4 columns maximum."
             )
+        for r_idx, row in enumerate(self.rows):
+            for c_idx, cell in enumerate(row):
+                if len(cell) > 35:
+                    raise ValueError(
+                        f"{pane_name} table '{template_id}' cell ({r_idx},{c_idx}) in split layout exceeds "
+                        f"density limit: {len(cell)} chars > 35 chars maximum."
+                    )
 
 
 _SAMPLE_CORE10: dict[str, Any] = {
@@ -72,6 +86,7 @@ _INVALID_SAMPLES_CORE10: list[dict[str, Any]] = [
     {"headers": [], "rows": [["1"]]},  # Violates min_length=1 for headers
     {"headers": ["A", "B"], "rows": [["1"]]},  # Row column count mismatch
     {"headers": ["A"], "rows": [["1"]], "highlight_row_index": 5},  # Highlight index out of bounds
+    {"headers": ["A"], "rows": [["X" * 90]]},  # Cell exceeds character limit
 ]
 
 SPEC = TemplateSpec(

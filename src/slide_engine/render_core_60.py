@@ -7,10 +7,10 @@ switches to a 2x2 or vertical stack layout inside narrow split panes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pptx.util import Inches
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from slide_engine.core_base import BoundingBox, FontEngine, ShapeBuilder, SlideMaster
 from slide_engine.models import BasePayload, ShortText, TemplateSpec
@@ -18,14 +18,18 @@ from slide_engine.models import BasePayload, ShortText, TemplateSpec
 if TYPE_CHECKING:
     from pptx.slide import Slide
 
+MetricValue = Annotated[str, StringConstraints(strip_whitespace=True, max_length=20)]
+MetricUnit = Annotated[str, StringConstraints(strip_whitespace=True, max_length=15)]
+MetricTrend = Annotated[str, StringConstraints(strip_whitespace=True, max_length=40)]
+
 
 class KpiMetric(BasePayload):
     """Metric item for KPI summary card."""
 
-    value: ShortText
-    unit: ShortText | None = None
+    value: MetricValue
+    unit: MetricUnit | None = None
     label: ShortText
-    trend: ShortText | None = None
+    trend: MetricTrend | None = None
     is_positive: bool | None = None
 
 
@@ -50,6 +54,7 @@ _SAMPLE_CORE60: dict[str, Any] = {
 
 _INVALID_SAMPLES_CORE60: list[dict[str, Any]] = [
     {"metrics": [{"label": "A", "value": "1"}]},  # Violates min_length=2
+    {"metrics": [{"label": "A", "value": "1" * 30}, {"label": "B", "value": "2"}]},  # Value exceeds limit
 ]
 
 SPEC = TemplateSpec(
@@ -119,7 +124,7 @@ def _render_kpi_card(
         inner_box.width,
         val_avail_h,
         max_pt=38.0,
-        min_pt=13.0,
+        min_pt=10.0,
     )
 
     p_val = tf.add_paragraph()

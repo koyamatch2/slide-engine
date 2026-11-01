@@ -41,13 +41,20 @@ class Core70Payload(BasePayload):
     right_column: ComparisonColumn
 
     def validate_split_density(self, pane_name: str, template_id: str) -> None:
-        """Enforce point count limits for split layout."""
+        """Enforce point count and character limits for split layout."""
         max_pts = max(len(self.left_column.points), len(self.right_column.points))
         if max_pts > 4:
             raise ValueError(
                 f"{pane_name} comparison '{template_id}' in split layout exceeds legibility limit: "
                 f"{max_pts} points > 4 points maximum."
             )
+        for col_name, col in [("Left", self.left_column), ("Right", self.right_column)]:
+            for p_idx, pt in enumerate(col.points):
+                if len(pt) > 80:
+                    raise ValueError(
+                        f"{pane_name} comparison '{template_id}' {col_name} column point {p_idx + 1} "
+                        f"in split layout exceeds character limit: {len(pt)} chars > 80 chars maximum."
+                    )
 
 
 _SAMPLE_CORE70: dict[str, Any] = {
@@ -133,7 +140,7 @@ def _render_comparison_column(
             text=column.header,
             weight=0.18,
             max_pt=15.0,
-            min_pt=9.0,
+            min_pt=8.0,
             color_key=header_col_key,
             bold=True,
             space_after_pt=None if column.sub_header else (space_gap_pt * 1.2),

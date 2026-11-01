@@ -21,6 +21,15 @@ MAX_SAFE_TEXT_LEN = 150
 # String type constraints
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_SHORT_TEXT_LEN)]
 SafeText = Annotated[str, StringConstraints(strip_whitespace=True, max_length=MAX_SAFE_TEXT_LEN)]
+ThemeName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=MAX_SHORT_TEXT_LEN,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+    ),
+]
 
 
 class BasePayload(BaseModel):
@@ -170,7 +179,7 @@ class PresentationDeck(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    theme_name: ShortText = Field(default="corporate_blue")
+    theme_name: ThemeName = Field(default="corporate_blue")
     slides: list[SlideDefinition] = Field(min_length=1, max_length=MAX_SLIDES_PER_DECK)
 
 

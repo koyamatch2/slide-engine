@@ -1,6 +1,6 @@
 """Renderer for Visual Guide Frame slide (CORE-50).
 
-Renders a manual placement guide box (placeholder frame) with dashed border,
+Renders a manual placement guide box (placeholder frame) with border,
 subtle background, placeholder label, and caption. Completely eliminates
 external image I/O and external image parsing dependencies.
 """
@@ -36,7 +36,7 @@ _SAMPLE_CORE50: dict[str, Any] = {
 }
 
 _INVALID_SAMPLES_CORE50: list[dict[str, Any]] = [
-    {"placeholder_label": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN (120)
+    {"placeholder_label": "A" * 150},  # Exceeds MAX_SHORT_TEXT_LEN
 ]
 
 SPEC = TemplateSpec(

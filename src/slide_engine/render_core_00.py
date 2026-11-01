@@ -45,7 +45,6 @@ SPEC = TemplateSpec(
 # Fallback Card Geometry Constants
 PADDING_X = Inches(0.400)
 PADDING_Y = Inches(0.350)
-HEADER_OFFSET_Y = Inches(0.600)
 
 
 def render_core_00(slide: Slide, payload: Core00Payload, box: BoundingBox) -> None:

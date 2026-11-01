@@ -28,6 +28,7 @@ from slide_engine.__main__ import main
 from slide_engine.controller import (
     _initialize_presentation,
     _render_slide_with_failsoft,
+    _resolve_safe_asset_path,
     build_dynamic_dispatch_table,
     generate_presentation,
 )
@@ -106,6 +107,37 @@ class TestSchemaValidationAndDefenses:
         excessive_slides = [valid_slide_dict] * (MAX_SLIDES_PER_DECK + 1)
         with pytest.raises(ValueError):
             PresentationDeck.model_validate({"theme_name": "corporate_blue", "slides": excessive_slides})
+
+    def test_theme_name_path_traversal_rejection(self) -> None:
+        """PresentationDeck must reject path traversal sequences and invalid theme_name characters."""
+        valid_tid, valid_spec = next((t, s) for t, s in TEMPLATE_REGISTRY.items() if not s.is_fallback)
+        slide_dict = {
+            "template_id": valid_tid,
+            "title": "Title",
+            "payload": valid_spec.sample_payload,
+        }
+
+        invalid_themes = [
+            "../../../../etc/passwd",
+            "/app/assets/malicious",
+            "../corporate_blue",
+            "corporate/blue",
+            "theme\\sub",
+            "theme name with space",
+            "theme$special!",
+            "",
+            "a" * 81,
+        ]
+
+        for inv_theme in invalid_themes:
+            with pytest.raises(ValidationError):
+                PresentationDeck.model_validate({"theme_name": inv_theme, "slides": [slide_dict]})
+
+    def test_resolve_safe_asset_path_containment(self) -> None:
+        """Controller _resolve_safe_asset_path must never resolve paths outside allowed asset dirs."""
+        assert _resolve_safe_asset_path("../../../../etc/passwd") is None
+        assert _resolve_safe_asset_path("..\\something") is None
+        assert _resolve_safe_asset_path("non_existent_random_theme_12345") is None
 
     def test_unsupported_split_template_raises_error(self) -> None:
         """Templates with supports_split=False must reject horizontal split."""
@@ -836,30 +868,119 @@ class TestAdaptiveLayoutAndPhysicalInvariants:
             )
 
     def test_max_text_capacity_physical_containment(self) -> None:
-        """Slides with strings saturating MAX_SHORT_TEXT_LEN and MAX_SAFE_TEXT_LEN must fit physically."""
+        """Slides saturating text lengths and item limits must fit physically without overflow."""
         max_title = "日" * 80
         max_desc = "説" * 150
-        slide_def = SlideDefinition.model_validate({
-            "template_id": "CORE-20",
-            "title": max_title,
-            "subtitle": "MAX STRING STRESS TEST",
-            "lead_text": max_desc,
-            "payload": {
-                "steps": [
-                    {
-                        "step_number": 1,
-                        "title": "短縮タイトル1",
-                        "description": max_desc,
-                    },
-                    {
-                        "step_number": 2,
-                        "title": "短縮タイトル2",
-                        "description": max_desc,
-                    },
-                ]
+
+        slides_data: list[dict[str, Any]] = [
+            # 1. CORE-01 Cover Slide saturated
+            {
+                "template_id": "CORE-01",
+                "title": max_title,
+                "payload": {
+                    "title": max_title,
+                    "subtitle": max_desc,
+                    "presenter": "発" * 80,
+                    "date_str": "日" * 30,
+                },
             },
-        })
-        deck = PresentationDeck(theme_name="corporate_blue", slides=[slide_def])
+            # 2. CORE-02 Agenda with 8 saturated items
+            {
+                "template_id": "CORE-02",
+                "title": max_title,
+                "lead_text": max_desc,
+                "payload": {
+                    "items": [
+                        {
+                            "number": f"0{i}",
+                            "title": f"標題{i}_" + ("目" * 70),
+                            "description": "説" * 100,
+                            "is_active": i == 1,
+                        }
+                        for i in range(1, 9)
+                    ]
+                },
+            },
+            # 3. CORE-20 Process Flow with 5 saturated steps
+            {
+                "template_id": "CORE-20",
+                "title": max_title,
+                "lead_text": max_desc,
+                "payload": {
+                    "steps": [
+                        {
+                            "step_number": i,
+                            "title": f"工程{i}_" + ("題" * 70),
+                            "description": max_desc,
+                        }
+                        for i in range(1, 6)
+                    ]
+                },
+            },
+            # 4. CORE-40 2x2 Matrix saturated
+            {
+                "template_id": "CORE-40",
+                "title": max_title,
+                "lead_text": max_desc,
+                "payload": {
+                    "x_axis_label": "軸" * 40,
+                    "y_axis_label": "軸" * 40,
+                    "top_left": {"title": "象" * 70, "badge": "B" * 20, "description": max_desc},
+                    "top_right": {"title": "象" * 70, "badge": "B" * 20, "description": max_desc},
+                    "bottom_left": {"title": "象" * 70, "badge": "B" * 20, "description": max_desc},
+                    "bottom_right": {"title": "象" * 70, "badge": "B" * 20, "description": max_desc},
+                },
+            },
+            # 5. CORE-70 Dual Column Comparison saturated
+            {
+                "template_id": "CORE-70",
+                "title": max_title,
+                "lead_text": max_desc,
+                "payload": {
+                    "left_column": {
+                        "header": "見" * 70,
+                        "sub_header": "副" * 70,
+                        "points": ["点" * 120 for _ in range(6)],
+                    },
+                    "right_column": {
+                        "header": "見" * 70,
+                        "sub_header": "副" * 70,
+                        "points": ["点" * 120 for _ in range(6)],
+                        "is_highlighted": True,
+                    },
+                },
+            },
+            # 6. CORE-70 Horizontal Split with CORE-10 saturated
+            {
+                "template_id": "CORE-10",
+                "title": max_title,
+                "lead_text": max_desc,
+                "payload": {
+                    "headers": [f"見{c}" for c in range(1, 5)],
+                    "rows": [["字" * 35 for _ in range(4)] for _ in range(8)],
+                },
+                "right_template_id": "CORE-70",
+                "right_payload": {
+                    "left_column": {
+                        "header": "見" * 50,
+                        "points": ["点" * 80 for _ in range(4)],
+                    },
+                    "right_column": {
+                        "header": "見" * 50,
+                        "points": ["点" * 80 for _ in range(4)],
+                        "is_highlighted": True,
+                    },
+                },
+                "split_ratio": 0.5,
+            },
+        ]
+
+        deck_dict = {
+            "theme_name": "corporate_blue",
+            "slides": slides_data,
+        }
+        deck = PresentationDeck.model_validate(deck_dict)
         prs, summary = generate_presentation(deck)
         assert summary["fallback_slides"] == 0
-        _assert_deck_physical_integrity(prs, 1, "MaxTextCapacity")
+        assert summary["rendered_slides"] == len(slides_data)
+        _assert_deck_physical_integrity(prs, len(slides_data), "MaxTextCapacityMultiTemplate")
