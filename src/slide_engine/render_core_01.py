@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pptx.util import Inches
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder
+from slide_engine.core_base import BoundingBox, ParagraphSpec, ShapeBuilder
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -72,37 +72,28 @@ def render_core_01(slide: Slide, payload: Core01Payload, box: BoundingBox) -> No
         width=COVER_WIDTH,
         height=COVER_HEIGHT,
     )
-    tb_title = ShapeBuilder.add_textbox(slide, title_box)
-    tf_title = tb_title.text_frame
-
-    title_budget_h = title_box.scale_height(0.55) if payload.subtitle else COVER_HEIGHT
-
-    # Main Title
-    ShapeBuilder.add_styled_paragraph(
-        tf_title,
-        payload.title,
-        COVER_WIDTH,
-        title_budget_h,
-        max_pt=32.0,
-        min_pt=18.0,
-        color_key="primary",
-        bold=True,
-        space_after_pt=14.0,
-        is_first=True,
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        title_box,
+        [
+            ParagraphSpec(
+                text=payload.title,
+                weight=0.55,
+                max_pt=32.0,
+                min_pt=18.0,
+                color_key="primary",
+                bold=True,
+                space_after_pt=14.0,
+            ),
+            ParagraphSpec(
+                text=payload.subtitle,
+                weight=0.35,
+                max_pt=16.0,
+                min_pt=10.0,
+                color_key="secondary",
+            ),
+        ],
     )
-
-    # Subtitle
-    if payload.subtitle:
-        sub_budget_h = title_box.scale_height(0.35)
-        ShapeBuilder.add_styled_paragraph(
-            tf_title,
-            payload.subtitle,
-            COVER_WIDTH,
-            sub_budget_h,
-            max_pt=16.0,
-            min_pt=10.0,
-            color_key="secondary",
-        )
 
     # 2. Presenter and Date Metadata Box
     meta_parts: list[str] = []

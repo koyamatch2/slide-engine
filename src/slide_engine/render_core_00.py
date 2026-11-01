@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pptx.util import Inches
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import BoundingBox, ParagraphSpec, ShapeBuilder, SlideMaster
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -67,62 +67,45 @@ def render_core_00(slide: Slide, payload: Core00Payload, box: BoundingBox) -> No
 
     # 2. Error Title & Message Text Box
     text_box = box.inset(PADDING_X, PADDING_Y)
-    tb = ShapeBuilder.add_textbox(slide, text_box)
-    tf = tb.text_frame
-
-    title_h = text_box.scale_height(0.18)
-    has_dump = bool(payload.raw_payload_dump)
-    desc_h = text_box.scale_height(0.22) if has_dump else text_box.scale_height(0.75)
-
-    # Error Badge / Title
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        f"[SYSTEM FALLBACK] {payload.error_title}",
-        text_box.width,
-        title_h,
-        max_pt=16.0,
-        min_pt=12.0,
-        color_key="fallback_text",
-        bold=True,
-        space_after_pt=8.0,
-        is_first=True,
+    dump_text = payload.raw_payload_dump[:1000] if payload.raw_payload_dump else None
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        text_box,
+        [
+            ParagraphSpec(
+                text=f"[SYSTEM FALLBACK] {payload.error_title}",
+                weight=0.18,
+                max_pt=16.0,
+                min_pt=12.0,
+                color_key="fallback_text",
+                bold=True,
+                space_after_pt=8.0,
+            ),
+            ParagraphSpec(
+                text=f"Cause: {payload.error_message}",
+                weight=0.30,
+                max_pt=11.0,
+                min_pt=9.0,
+                color_key="text_dark",
+                bold=True,
+                space_after_pt=12.0,
+            ),
+            ParagraphSpec(
+                text="Payload Diagnostics Snapshot:" if dump_text else None,
+                weight=0.10,
+                max_pt=9.5,
+                min_pt=9.5,
+                color_key="text_muted",
+                bold=True,
+                font_family=SlideMaster.FONT_FAMILY_SECONDARY,
+            ),
+            ParagraphSpec(
+                text=dump_text,
+                weight=0.42,
+                max_pt=8.5,
+                min_pt=8.0,
+                color_key="text_muted",
+                font_family=SlideMaster.FONT_FAMILY_SECONDARY,
+            ),
+        ],
     )
-
-    # Error Description
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        f"Cause: {payload.error_message}",
-        text_box.width,
-        desc_h,
-        max_pt=11.0,
-        min_pt=9.0,
-        color_key="text_dark",
-        bold=True,
-        space_after_pt=12.0,
-    )
-
-    # Raw Payload Diagnostics Dump
-    if has_dump:
-        diag_hdr_h = text_box.scale_height(0.10)
-        diag_body_h = text_box.scale_height(0.50)
-        ShapeBuilder.add_styled_paragraph(
-            tf,
-            "Payload Diagnostics Snapshot:",
-            text_box.width,
-            diag_hdr_h,
-            max_pt=9.5,
-            min_pt=9.5,
-            color_key="text_muted",
-            bold=True,
-            font_family=SlideMaster.FONT_FAMILY_SECONDARY,
-        )
-        ShapeBuilder.add_styled_paragraph(
-            tf,
-            payload.raw_payload_dump[:1000],
-            text_box.width,
-            diag_body_h,
-            max_pt=8.5,
-            min_pt=8.0,
-            color_key="text_muted",
-            font_family=SlideMaster.FONT_FAMILY_SECONDARY,
-        )

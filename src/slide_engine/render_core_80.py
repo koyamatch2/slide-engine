@@ -12,7 +12,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster, clamp_length
 from slide_engine.models import BasePayload, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -128,6 +128,18 @@ def _format_step_value(step: WaterfallStep, unit: str | None) -> str:
     return val_str
 
 
+def _resolve_value_label_top(
+    bar_box: BoundingBox,
+    is_positive: bool,
+    lbl_top: Length,
+    box_top: Length,
+) -> Length:
+    """Calculate clamped Y coordinate for value label above or below the bar."""
+    if is_positive:
+        return clamp_length(bar_box.top - VAL_H, min_val=box_top)
+    return clamp_length(bar_box.bottom, max_val=lbl_top - VAL_H)
+
+
 def _render_step(
     slide: Slide,
     step: WaterfallStep,
@@ -147,8 +159,7 @@ def _render_step(
 
     ShapeBuilder.add_card(slide, bar_box, bg_color=bg_col, border_width_pt=0.0)
 
-    # Positive changes/totals place value above bar; negative changes place below bar
-    val_y = Length(max(int(box_top), int(bar_box.top - VAL_H))) if is_positive else Length(min(int(lbl_top - VAL_H), int(bar_box.bottom)))
+    val_y = _resolve_value_label_top(bar_box, is_positive, lbl_top, box_top)
     val_box = BoundingBox(bar_box.left, val_y, bar_box.width, VAL_H)
     ShapeBuilder.add_styled_textbox(
         slide,
@@ -200,15 +211,15 @@ def render_core_80(slide: Slide, payload: Core80Payload, box: BoundingBox) -> No
     gap_y = Inches(0.080)
     chart_area_top = Length(box.top + VAL_H)
     chart_area_bottom = Length(lbl_top - VAL_H - gap_y)
-    usable_h = Length(max(int(Inches(1.000)), int(chart_area_bottom - chart_area_top)))
+    usable_h = clamp_length(chart_area_bottom - chart_area_top, min_val=Inches(1.000))
 
     val_range = max_v - min_v
     scale = float(usable_h / val_range) if val_range > 0 else 1.0
 
     num_steps = len(payload.steps)
-    gap_x = Length(min(int(GAP_X), int(box.width * 0.03)))
+    gap_x = clamp_length(GAP_X, max_val=box.width * 0.03)
     total_gap = Length(int(gap_x * (num_steps - 1)))
-    avail_bar_space = max(int(Inches(0.500)), int(box.width - total_gap))
+    avail_bar_space = clamp_length(box.width - total_gap, min_val=Inches(0.500))
     bar_w = Length(int(avail_bar_space / num_steps))
 
     curr_x = box.left
@@ -216,13 +227,13 @@ def render_core_80(slide: Slide, payload: Core80Payload, box: BoundingBox) -> No
         y_start = chart_area_top + int(round((max_v - s_val) * scale))
         y_end = chart_area_top + int(round((max_v - e_val) * scale))
         bar_top = Length(min(y_start, y_end))
-        bar_h = Length(max(int(MIN_BAR_H), abs(y_start - y_end)))
+        bar_h = clamp_length(abs(y_start - y_end), min_val=MIN_BAR_H)
 
         if bar_top + bar_h > chart_area_bottom:
-            bar_top = Length(max(int(chart_area_top), int(chart_area_bottom - bar_h)))
+            bar_top = clamp_length(chart_area_bottom - bar_h, min_val=chart_area_top)
 
         bar_box = BoundingBox(curr_x, bar_top, bar_w, bar_h)
-        is_pos = (e_val >= s_val) if not step.is_total else (step.value >= 0)
+        is_pos = (step.value >= 0) if step.is_total else (e_val >= s_val)
         _render_step(slide, step, payload.unit, bar_box, is_pos, lbl_top, box.top)
 
         if idx < num_steps - 1:

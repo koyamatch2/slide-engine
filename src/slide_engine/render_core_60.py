@@ -162,19 +162,12 @@ def render_core_60(slide: Slide, payload: Core60Payload, box: BoundingBox) -> No
         payload: Core60Payload instance.
         box: Content BoundingBox.
     """
-    num_cards = len(payload.metrics)
-    cols = max(1, min(num_cards, int(box.width / MIN_KPI_COL_WIDTH)))
-    if cols == 3 and num_cards == 4:
-        cols = 2
-    rows = -(-num_cards // cols)
-
-    grid = box.sub_grid(
-        rows=rows,
-        cols=cols,
+    grid = box.adaptive_grid(
+        num_items=len(payload.metrics),
+        min_col_width=MIN_KPI_COL_WIDTH,
         gap_x=CARD_GAP,
         gap_y=CARD_GAP,
-        max_gap_x_ratio=0.03,
-        max_gap_y_ratio=0.04,
+        balance_rows=True,
     )
 
     for metric, card_box in zip(payload.metrics, grid, strict=False):

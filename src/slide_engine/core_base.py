@@ -111,6 +111,63 @@ class BoundingBox:
                 grid.append(BoundingBox(c_left, c_top, cell_w, cell_h))
         return grid
 
+    def adaptive_grid(
+        self,
+        num_items: int,
+        min_col_width: Length,
+        gap_x: Length,
+        gap_y: Length | None = None,
+        *,
+        balance_rows: bool = True,
+        max_gap_x_ratio: float = 0.03,
+        max_gap_y_ratio: float = 0.04,
+    ) -> list[BoundingBox]:
+        """Compute adaptive sub-grid bounding boxes that automatically adapt columns and rows.
+
+        Args:
+            num_items: Total number of items to arrange.
+            min_col_width: Minimum allowable column width before reducing columns.
+            gap_x: Horizontal gap between grid cells.
+            gap_y: Optional vertical gap between cells (defaults to gap_x).
+            balance_rows: If True, balances column count across rows (e.g. 4 items in max 3 cols -> 2x2).
+            max_gap_x_ratio: Maximum allowable horizontal gap ratio relative to width.
+            max_gap_y_ratio: Maximum allowable vertical gap ratio relative to height.
+
+        Returns:
+            List of BoundingBox objects for each cell up to num_items.
+        """
+        if num_items <= 0:
+            return []
+
+        max_cols = max(1, min(num_items, int(self.width / min_col_width)))
+        rows = math.ceil(num_items / max_cols)
+        cols = math.ceil(num_items / rows) if balance_rows else max_cols
+
+        eff_gap_y = gap_x if gap_y is None else gap_y
+        all_cells = self.sub_grid(
+            rows=rows,
+            cols=cols,
+            gap_x=gap_x,
+            gap_y=eff_gap_y,
+            max_gap_x_ratio=max_gap_x_ratio,
+            max_gap_y_ratio=max_gap_y_ratio,
+        )
+        return all_cells[:num_items]
+
+
+def clamp_length(
+    value: int | float | Length,
+    min_val: int | float | Length | None = None,
+    max_val: int | float | Length | None = None,
+) -> Length:
+    """Clamp an EMU or integer value within optional minimum and maximum bounds."""
+    val_int = int(value)
+    if min_val is not None:
+        val_int = max(val_int, int(min_val))
+    if max_val is not None:
+        val_int = min(val_int, int(max_val))
+    return Length(val_int)
+
 
 class SlideMaster:
     """Design system constants, slide dimensions, and master layout resolver."""
@@ -245,6 +302,21 @@ class SlideMaster:
         if len(prs.slide_layouts) > 6:
             return prs.slide_layouts[6]
         return prs.slide_layouts[0]
+
+
+@dataclass(frozen=True)
+class ParagraphSpec:
+    """Specification for an individual paragraph inside an adaptive text stack."""
+
+    text: str | None
+    weight: float = 1.0
+    max_pt: float = 12.0
+    min_pt: float = 8.0
+    color_key: str = "text_dark"
+    bold: bool = False
+    alignment: PP_ALIGN | None = None
+    font_family: str = SlideMaster.FONT_FAMILY_PRIMARY
+    space_after_pt: float | None = None
 
 
 class FontEngine:
@@ -565,6 +637,55 @@ class ShapeBuilder:
         )
         return tb
 
+    @classmethod
+    def populate_paragraph_stack(
+        cls,
+        tf: Any,
+        width: Length,
+        height: Length,
+        specs: Sequence[ParagraphSpec],
+    ) -> None:
+        """Render a vertical stack of styled paragraphs into a TextFrame with automated height budgeting."""
+        valid_specs = [s for s in specs if s.text and s.text.strip()]
+        if not valid_specs:
+            return
+
+        total_weight = sum(s.weight for s in valid_specs)
+        if total_weight <= 0:
+            total_weight = float(len(valid_specs))
+
+        for idx, spec in enumerate(valid_specs):
+            ratio = spec.weight / total_weight
+            budget_h = Length(max(int(FontEngine.pt(spec.min_pt)), int(height * ratio)))
+            cls.add_styled_paragraph(
+                tf,
+                spec.text,  # type: ignore[arg-type]
+                width,
+                budget_h,
+                max_pt=spec.max_pt,
+                min_pt=spec.min_pt,
+                color_key=spec.color_key,
+                bold=spec.bold,
+                alignment=spec.alignment,
+                font_family=spec.font_family,
+                space_after_pt=spec.space_after_pt,
+                is_first=(idx == 0),
+            )
+
+    @classmethod
+    def add_styled_paragraph_stack(
+        cls,
+        slide: Slide,
+        box: BoundingBox,
+        specs: Sequence[ParagraphSpec],
+        *,
+        margin_zero: bool = True,
+    ) -> Shape:
+        """Create a textbox and render a vertical stack of styled paragraphs with automated height budgeting."""
+        tb = cls.add_textbox(slide, box, margin_zero=margin_zero)
+        cls.populate_paragraph_stack(tb.text_frame, box.width, box.height, specs)
+        return tb
+
 
 def render_standard_header(
     slide: Slide,
@@ -587,39 +708,28 @@ def render_standard_header(
         width=Length(SlideMaster.SLIDE_WIDTH - (SlideMaster.MARGIN_LEFT * 2)),
         height=Inches(1.000),
     )
-    textbox = ShapeBuilder.add_textbox(slide, header_box)
-    tf = textbox.text_frame
-
-    # 1. Subtitle / Tracker Category
-    if subtitle:
-        sub_avail_h = header_box.scale_height(0.28)
-        ShapeBuilder.add_styled_paragraph(
-            tf,
-            subtitle.upper(),
-            header_box.width,
-            sub_avail_h,
-            max_pt=10.0,
-            min_pt=10.0,
-            color_key="secondary",
-            bold=True,
-            space_after_pt=2.0,
-            is_first=True,
-        )
-        title_avail_h = header_box.scale_height(0.72)
-    else:
-        title_avail_h = header_box.height
-
-    # 2. Main Slide Title
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        title,
-        header_box.width,
-        title_avail_h,
-        max_pt=20.0,
-        min_pt=14.0,
-        color_key="primary",
-        bold=True,
-        is_first=not bool(subtitle),
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        header_box,
+        [
+            ParagraphSpec(
+                text=subtitle.upper() if subtitle else None,
+                weight=0.28,
+                max_pt=10.0,
+                min_pt=10.0,
+                color_key="secondary",
+                bold=True,
+                space_after_pt=2.0,
+            ),
+            ParagraphSpec(
+                text=title,
+                weight=0.72,
+                max_pt=20.0,
+                min_pt=14.0,
+                color_key="primary",
+                bold=True,
+            ),
+        ],
     )
 
     # 3. Optional Lead Text Box

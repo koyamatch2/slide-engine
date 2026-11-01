@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING, Any
 from pptx.util import Inches, Length
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import (
+    BoundingBox,
+    ParagraphSpec,
+    ShapeBuilder,
+    SlideMaster,
+    clamp_length,
+)
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -97,29 +103,28 @@ def _render_step_content(
     space_after_pt: float,
 ) -> None:
     """Render standardized step card title and description."""
-    title_h = Length(int(height * 0.40))
-    desc_h = Length(int(height * 0.55))
-
-    ShapeBuilder.add_styled_paragraph(
+    ShapeBuilder.populate_paragraph_stack(
         tf,
-        title,
         width,
-        title_h,
-        max_pt=title_max_pt,
-        min_pt=8.0,
-        color_key="primary",
-        bold=True,
-        space_after_pt=space_after_pt,
-        is_first=True,
-    )
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        description,
-        width,
-        desc_h,
-        max_pt=10.0,
-        min_pt=8.0,
-        color_key="text_dark",
+        height,
+        [
+            ParagraphSpec(
+                text=title,
+                weight=0.40,
+                max_pt=title_max_pt,
+                min_pt=8.0,
+                color_key="primary",
+                bold=True,
+                space_after_pt=space_after_pt,
+            ),
+            ParagraphSpec(
+                text=description,
+                weight=0.55,
+                max_pt=10.0,
+                min_pt=8.0,
+                color_key="text_dark",
+            ),
+        ],
     )
 
 
@@ -149,11 +154,11 @@ def _render_standard_step_card(
     step_box: BoundingBox,
 ) -> None:
     """Render a standard step card with dedicated badge box."""
-    pad_x = Length(min(int(CARD_PADDING_X), int(step_box.width * 0.08)))
-    pad_y = Length(min(int(CARD_PADDING_Y), int(step_box.height * 0.08)))
-    inner_w = Length(max(int(Inches(0.400)), int(step_box.width - (pad_x * 2))))
-    badge_h = Length(min(int(BADGE_HEIGHT), int(step_box.height * 0.22)))
-    inner_gap = Length(min(int(Inches(0.060)), int(step_box.height * 0.04)))
+    pad_x = clamp_length(CARD_PADDING_X, max_val=step_box.width * 0.08)
+    pad_y = clamp_length(CARD_PADDING_Y, max_val=step_box.height * 0.08)
+    inner_w = clamp_length(step_box.width - (pad_x * 2), min_val=Inches(0.400))
+    badge_h = clamp_length(BADGE_HEIGHT, max_val=step_box.height * 0.22)
+    inner_gap = clamp_length(Inches(0.060), max_val=step_box.height * 0.04)
 
     # Number Badge Header Box
     badge_box = BoundingBox(
@@ -174,7 +179,7 @@ def _render_standard_step_card(
 
     # Step Title & Description Box
     content_top = Length(step_box.top + pad_y + badge_h + inner_gap)
-    content_h = Length(max(int(Inches(0.300)), int(step_box.bottom - content_top - pad_y)))
+    content_h = clamp_length(step_box.bottom - content_top - pad_y, min_val=Inches(0.300))
     content_box = BoundingBox(
         left=Length(step_box.left + pad_x),
         top=content_top,
@@ -221,17 +226,12 @@ def render_core_20(slide: Slide, payload: Core20Payload, box: BoundingBox) -> No
         payload: Core20Payload instance.
         box: Content BoundingBox.
     """
-    num_steps = len(payload.steps)
-    cols = max(1, min(num_steps, int(box.width / MIN_STEP_COL_WIDTH)))
-    rows = -(-num_steps // cols)
-
-    grid = box.sub_grid(
-        rows=rows,
-        cols=cols,
+    grid = box.adaptive_grid(
+        num_items=len(payload.steps),
+        min_col_width=MIN_STEP_COL_WIDTH,
         gap_x=GAP_BETWEEN_STEPS,
         gap_y=GAP_BETWEEN_STEPS,
-        max_gap_x_ratio=0.03,
-        max_gap_y_ratio=0.04,
+        balance_rows=False,
     )
 
     for step, step_box in zip(payload.steps, grid, strict=False):

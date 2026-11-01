@@ -12,7 +12,13 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
 from pydantic import Field
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import (
+    BoundingBox,
+    ParagraphSpec,
+    ShapeBuilder,
+    SlideMaster,
+    clamp_length,
+)
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -77,10 +83,10 @@ def _render_agenda_row(
     border_col = SlideMaster.COLORS["primary"] if item.is_active else SlideMaster.COLORS["border"]
     ShapeBuilder.add_card(slide, row_box, bg_color=bg_col, border_color=border_col, border_width_pt=1.0)
 
-    pad_x = Length(min(int(PADDING_CONTENT), int(row_box.width * 0.05)))
-    pad_y = Length(min(int(Inches(0.100)), int(row_box.height * 0.12)))
-    badge_h = Length(min(int(Inches(0.420)), int(row_box.height - pad_y * 2)))
-    badge_w = Length(min(int(BADGE_WIDTH), int(row_box.width * 0.15)))
+    pad_x = clamp_length(PADDING_CONTENT, max_val=row_box.width * 0.05)
+    pad_y = clamp_length(Inches(0.100), max_val=row_box.height * 0.12)
+    badge_h = clamp_length(Inches(0.420), max_val=row_box.height - pad_y * 2)
+    badge_w = clamp_length(BADGE_WIDTH, max_val=row_box.width * 0.15)
 
     # 1. Number Badge
     badge_box = BoundingBox(
@@ -111,35 +117,30 @@ def _render_agenda_row(
         width=content_width,
         height=content_height,
     )
-    tb_content = ShapeBuilder.add_textbox(slide, content_box)
-    tf_content = tb_content.text_frame
-
-    title_budget_h = content_box.scale_height(0.55) if item.description else content_height
     title_col_key = "text_light" if item.is_active else "text_dark"
-    ShapeBuilder.add_styled_paragraph(
-        tf_content,
-        item.title,
-        content_box.width,
-        title_budget_h,
-        max_pt=14.0,
-        min_pt=9.0,
-        color_key=title_col_key,
-        bold=True,
-        is_first=True,
-    )
+    desc_col_key = "bg_light" if item.is_active else "text_muted"
 
-    if item.description:
-        desc_budget_h = content_box.scale_height(0.42)
-        desc_col_key = "bg_light" if item.is_active else "text_muted"
-        ShapeBuilder.add_styled_paragraph(
-            tf_content,
-            item.description,
-            content_box.width,
-            desc_budget_h,
-            max_pt=10.0,
-            min_pt=8.0,
-            color_key=desc_col_key,
-        )
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        content_box,
+        [
+            ParagraphSpec(
+                text=item.title,
+                weight=0.55,
+                max_pt=14.0,
+                min_pt=9.0,
+                color_key=title_col_key,
+                bold=True,
+            ),
+            ParagraphSpec(
+                text=item.description,
+                weight=0.42,
+                max_pt=10.0,
+                min_pt=8.0,
+                color_key=desc_col_key,
+            ),
+        ],
+    )
 
 
 def render_core_02(slide: Slide, payload: Core02Payload, box: BoundingBox) -> None:

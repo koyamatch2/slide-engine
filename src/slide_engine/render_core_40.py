@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Length
 
-from slide_engine.core_base import BoundingBox, ShapeBuilder, SlideMaster
+from slide_engine.core_base import (
+    BoundingBox,
+    ParagraphSpec,
+    ShapeBuilder,
+    SlideMaster,
+    clamp_length,
+)
 from slide_engine.models import BasePayload, SafeText, ShortText, TemplateSpec
 
 if TYPE_CHECKING:
@@ -96,31 +102,28 @@ def _render_quadrant_card(
     )
 
     inner_box = box.inset(QUADRANT_PADDING, QUADRANT_PADDING, max_ratio_x=0.08, max_ratio_y=0.08)
-    tb = ShapeBuilder.add_textbox(slide, inner_box)
-    tf = tb.text_frame
-
     header_text = f"[{quadrant.badge}] {quadrant.title}" if quadrant.badge else quadrant.title
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        header_text,
-        inner_box.width,
-        inner_box.scale_height(0.35),
-        max_pt=12.5,
-        min_pt=8.5,
-        color_key="primary",
-        bold=True,
-        space_after_pt=4.0,
-        is_first=True,
-    )
-
-    ShapeBuilder.add_styled_paragraph(
-        tf,
-        quadrant.description,
-        inner_box.width,
-        inner_box.scale_height(0.60),
-        max_pt=10.0,
-        min_pt=8.0,
-        color_key="text_dark",
+    ShapeBuilder.add_styled_paragraph_stack(
+        slide,
+        inner_box,
+        [
+            ParagraphSpec(
+                text=header_text,
+                weight=0.35,
+                max_pt=12.5,
+                min_pt=8.5,
+                color_key="primary",
+                bold=True,
+                space_after_pt=4.0,
+            ),
+            ParagraphSpec(
+                text=quadrant.description,
+                weight=0.60,
+                max_pt=10.0,
+                min_pt=8.0,
+                color_key="text_dark",
+            ),
+        ],
     )
 
 
@@ -133,7 +136,7 @@ def render_core_40(slide: Slide, payload: Core40Payload, box: BoundingBox) -> No
         box: Content BoundingBox.
     """
     # 1. Axis Label Zones
-    axis_h = Length(min(int(AXIS_LABEL_SIZE), int(box.height * 0.10)))
+    axis_h = clamp_length(AXIS_LABEL_SIZE, max_val=box.height * 0.10)
     axis_box = BoundingBox(box.left, box.top, box.width, axis_h)
     ShapeBuilder.add_styled_textbox(
         slide,
@@ -147,9 +150,9 @@ def render_core_40(slide: Slide, payload: Core40Payload, box: BoundingBox) -> No
     )
 
     # 2. Quadrants Layout Calculation via sub_grid
-    gap_x = Length(min(int(GRID_GAP), int(box.width * 0.04)))
-    gap_y = Length(min(int(GRID_GAP), int(box.height * 0.04)))
-    top_offset = Length(min(int(Inches(0.080)), int(box.height * 0.02)))
+    gap_x = clamp_length(GRID_GAP, max_val=box.width * 0.04)
+    gap_y = clamp_length(GRID_GAP, max_val=box.height * 0.04)
+    top_offset = clamp_length(Inches(0.080), max_val=box.height * 0.02)
 
     quad_top = Length(box.top + axis_h + top_offset)
     quad_area_h = Length(box.height - axis_h - top_offset)

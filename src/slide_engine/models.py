@@ -136,12 +136,12 @@ class SlideDefinition(BaseModel):
         raw_right_payload = data_dict.get("right_payload")
         right_tid = data_dict.get("right_template_id")
 
-        if (raw_right_payload is None) ^ (right_tid is None):
+        if raw_right_payload is None and right_tid is None:
+            return data_dict
+        if raw_right_payload is None or right_tid is None:
             raise ValueError(
                 "Both 'right_template_id' and 'right_payload' must be provided together for split layout."
             )
-        if raw_right_payload is None or right_tid is None:
-            return data_dict
 
         data_dict["right_template_id"] = right_tid
         data_dict["right_payload"] = _validate_single_pane(right_tid, raw_right_payload, is_right=True)
